@@ -1,0 +1,6 @@
+accessWidener	v2	named
+
+# Phase 1 does not need to widen any Minecraft internals - everything is
+# done through public Fabric API / vanilla client-side API. Add entries
+# here only if a later phase (Navigation/Combat/Mining) genuinely needs
+# access to a package-private field or method that has no public API.

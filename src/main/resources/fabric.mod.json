@@ -1,0 +1,25 @@
+{
+	"schemaVersion": 1,
+	"id": "autonomousbot",
+	"version": "${version}",
+	"name": "Autonomous Bot",
+	"description": "Phase 1: perception -> Jev decision -> action loop for an autonomous Minecraft client bot.",
+	"authors": ["kazuto (Kazut0)"],
+	"contact": {},
+	"license": "MIT",
+	"icon": "assets/autonomousbot/icon.png",
+	"environment": "client",
+	"entrypoints": {
+		"client": [
+			"net.kztmc.mc.autonomousbot.AutonomousBotClient"
+		]
+	},
+	"mixins": [],
+	"accessWidener": "autonomousbot.accesswidener",
+	"depends": {
+		"fabricloader": ">=0.16.0",
+		"minecraft": "~1.21.11",
+		"java": ">=21",
+		"fabric-api": "*"
+	}
+}

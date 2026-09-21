@@ -1,0 +1,8 @@
+.gradle/
+build/
+out/
+.idea/
+*.iml
+run/
+config/autonomousbot.json
+config/autonomousbot/
