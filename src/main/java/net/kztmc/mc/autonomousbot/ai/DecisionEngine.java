@@ -105,7 +105,12 @@ public final class DecisionEngine {
 		}
 
 		DecisionQuestion question = buildQuestion(state, candidates);
-		String fallbackId = candidates.get(0).id; // candidates[0] is always WAIT, see CandidateActionGenerator
+		// 変更後（シャッフル後はWAITが先頭とは限らないため）
+		String fallbackId = candidates.stream()
+				.filter(a -> a.type == ActionType.WAIT)
+				.findFirst()
+				.map(a -> a.id)
+				.orElse(candidates.get(0).id);
 
 		requestInFlight.set(true);
 		lastDecisionAtMs = System.currentTimeMillis();

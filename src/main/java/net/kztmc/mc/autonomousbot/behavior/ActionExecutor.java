@@ -24,36 +24,22 @@ public final class ActionExecutor {
 
 	private static final Logger LOGGER = LoggerFactory.getLogger("AutonomousBot/ActionExecutor");
 
-	/** Ticks to hold the forward key down for a single MOVE_FORWARD action. */
-	private static final int MOVE_HOLD_TICKS = 4;
-	/** Ticks to hold the jump key down for a single JUMP action. */
+	// 変更後
+	/** Ticks to hold the jump key down for a single JUMP action (instantaneous tap). */
 	private static final int JUMP_HOLD_TICKS = 2;
 
-	private int forwardHoldTicksRemaining = 0;
+	// MOVE_FORWARD is continuous: held down every tick until a different
+	// action is chosen, instead of a short burst per decision cycle
+	// (a short burst was shorter than the decision interval, causing
+	// press/release/press/release stutter-stepping).
+	private boolean movingForward = false;
 	private int jumpHoldTicksRemaining = 0;
 
-	/**
-	 * Called once per client tick regardless of whether a new decision just
-	 * arrived, so held keys get released again after their duration.
-	 */
 	public void tick(MinecraftClient client) {
-		if (client.options == null) {
-			return;
-		}
-		if (forwardHoldTicksRemaining > 0) {
-			forwardHoldTicksRemaining--;
-			client.options.forwardKey.setPressed(true);
-			if (forwardHoldTicksRemaining == 0) {
-				client.options.forwardKey.setPressed(false);
-			}
-		}
-		if (jumpHoldTicksRemaining > 0) {
-			jumpHoldTicksRemaining--;
-			client.options.jumpKey.setPressed(true);
-			if (jumpHoldTicksRemaining == 0) {
-				client.options.jumpKey.setPressed(false);
-			}
-		}
+		if (client.options == null) return;
+		client.options.forwardKey.setPressed(movingForward);
+		client.options.jumpKey.setPressed(jumpHoldTicksRemaining > 0);
+		if (jumpHoldTicksRemaining > 0) jumpHoldTicksRemaining--;
 	}
 
 	public void execute(MinecraftClient client, Action action) {
@@ -64,21 +50,25 @@ public final class ActionExecutor {
 
 		switch (action.type) {
 			case WAIT -> {
-				// intentionally nothing - safe default state
+				movingForward = false;
 			}
-			case MOVE_FORWARD -> forwardHoldTicksRemaining = MOVE_HOLD_TICKS;
+// 変更後
+			case MOVE_FORWARD -> movingForward = true;
 			case JUMP -> {
 				if (player.isOnGround()) {
 					jumpHoldTicksRemaining = JUMP_HOLD_TICKS;
 				}
 			}
-			case LOOK -> findTarget(client, action.targetEntityUuid)
-				.ifPresent(target -> player.lookAt(EntityAnchorArgumentType.EntityAnchor.EYES, new Vec3d(target.getX(), target.getY(), target.getZ())));
+			case LOOK -> findTarget(client, action.targetEntityUuid).ifPresent(target -> {
+				player.lookAt(EntityAnchorArgumentType.EntityAnchor.EYES, aimPoint(target));
+				movingForward = false;
+			});
 			case ATTACK -> findTarget(client, action.targetEntityUuid).ifPresent(target -> {
-				player.lookAt(EntityAnchorArgumentType.EntityAnchor.EYES, new Vec3d(target.getX(), target.getY(), target.getZ()));
+				player.lookAt(EntityAnchorArgumentType.EntityAnchor.EYES, aimPoint(target));
 				if (client.interactionManager != null) {
 					client.interactionManager.attackEntity(player, target);
 				}
+				movingForward = false;
 			});
 			default -> LOGGER.warn("No executor implemented for action type {}", action.type);
 		}
@@ -86,7 +76,7 @@ public final class ActionExecutor {
 
 	/** Immediately stops any held movement keys. Used by the emergency stop. */
 	public void releaseAll(MinecraftClient client) {
-		forwardHoldTicksRemaining = 0;
+		movingForward = false;
 		jumpHoldTicksRemaining = 0;
 		if (client.options != null) {
 			client.options.forwardKey.setPressed(false);
@@ -114,5 +104,13 @@ public final class ActionExecutor {
 			LOGGER.warn("Invalid target UUID in decision: {}", uuidString);
 			return Optional.empty();
 		}
+	}
+
+	private net.minecraft.util.math.Vec3d aimPoint(Entity target) {
+		if (target instanceof net.minecraft.entity.LivingEntity living) {
+			return living.getEyePos();
+		}
+		Vec3d Pos = new Vec3d(target.getX(), target.getY(), target.getZ());
+		return Pos.add(0, target.getHeight() * 0.5, 0);
 	}
 }
