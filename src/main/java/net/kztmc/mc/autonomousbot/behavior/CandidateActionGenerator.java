@@ -11,11 +11,9 @@ import java.util.Optional;
 
 public final class CandidateActionGenerator {
 
-	private static final double ATTACK_RANGE = 3.5D;
-	/** Closer than this, prefer creating space over standing and trading hits. */
-	public static final double RETREAT_TRIGGER_RANGE = 3.0D;
-	/** Weapon must be at least this charged (getAttackCooldownProgress) to swing. */
-	private static final float COOLDOWN_READY_THRESHOLD = 0.9f;
+	public static final double ATTACK_RANGE = 3.5D;
+	public static final double RETREAT_TRIGGER_RANGE = 2.0D;
+	public static final float COOLDOWN_READY_THRESHOLD = 0.9f;
 
 	private CandidateActionGenerator() {
 	}
@@ -41,26 +39,24 @@ public final class CandidateActionGenerator {
 			boolean cooldownReady = state.player.attackCooldownProgress >= COOLDOWN_READY_THRESHOLD;
 			boolean isFalling = !state.player.onGround && state.player.velocityY < 0;
 
-			// 最短距離の敵1体だけでなく、近くにいる敵対Mobの総数も見る
-			// (複数に囲まれている時は、1体だけを見ていると他の攻撃を食らう)
 			long hostilesNearby = state.nearbyEntities.stream()
 					.filter(e -> e.hostile)
 					.filter(e -> e.distance <= ATTACK_RANGE)
 					.count();
 			boolean surrounded = hostilesNearby >= 2;
-			// 囲まれている時は、単体の時よりも早めに離脱を検討させる
 			double retreatRange = surrounded ? ATTACK_RANGE : RETREAT_TRIGGER_RANGE;
 
 			unordered.add(new Action(null, ActionType.LOOK,
-					"Turn to face (and approach) the nearest hostile mob " + target.entityId
+					"Turn to face the nearest hostile mob " + target.entityId
 							+ " (" + String.format("%.1f", target.distance) + " blocks away)"
-							+ (surrounded ? ", but note you are surrounded by " + hostilesNearby + " hostile mobs" : ""),
-					target.entityUuid, null));
+							+ (surrounded ? ". You are surrounded by " + hostilesNearby + " hostile mobs - "
+							+ "hold your ground and let it come to you rather than approaching." : ""),
+					target.entityUuid, null, surrounded));
 
 			if (target.distance <= retreatRange) {
 				String urgency = surrounded
 						? " You are surrounded by " + hostilesNearby + " hostile mobs at close range - "
-						+ "retreating now is strongly advised to avoid taking hits from the others while focused on one target."
+						+ "retreating now is strongly advised to avoid taking hits from the others."
 						: "";
 				unordered.add(new Action(null, ActionType.RETREAT,
 						"Back away from " + target.entityId + " to create space instead of trading hits at melee range." + urgency,
@@ -69,20 +65,20 @@ public final class CandidateActionGenerator {
 
 			if (inRange && cooldownReady) {
 				unordered.add(new Action(null, ActionType.ATTACK,
-						"Attack " + target.entityId + " with a normal swing (weapon is ready, "
+						"Attack " + target.entityId + " with a normal swing (weapon ready, "
 								+ String.format("%.1f", target.distance) + " blocks away)",
-						target.entityUuid, null));
+						target.entityUuid, null, surrounded));
 
 				if (!state.player.sprinting) {
 					unordered.add(new Action(null, ActionType.SPRINT_ATTACK,
 							"Sprint in and attack " + target.entityId + " for a sprint/knockback hit",
-							target.entityUuid, null));
+							target.entityUuid, null, surrounded));
 				}
 
 				if (isFalling) {
 					unordered.add(new Action(null, ActionType.CRITICAL_ATTACK,
 							"You are currently falling - attack " + target.entityId + " now for a critical hit",
-							target.entityUuid, null));
+							target.entityUuid, null, surrounded));
 				}
 			}
 
@@ -101,7 +97,7 @@ public final class CandidateActionGenerator {
 		List<Action> candidates = new ArrayList<>();
 		char nextId = 'A';
 		for (Action a : unordered) {
-			candidates.add(new Action(String.valueOf(nextId++), a.type, a.label, a.targetEntityUuid, a.targetSlot));
+			candidates.add(new Action(String.valueOf(nextId++), a.type, a.label, a.targetEntityUuid, a.targetSlot, a.holdGround));
 		}
 		return candidates;
 	}

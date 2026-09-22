@@ -5,29 +5,36 @@ public final class Action {
 	public final ActionType type;
 	public final String label;
 	public final String targetEntityUuid;
-	/** Hotbar slot index (0-8). Only set for SELECT_SLOT actions. */
 	public final Integer targetSlot;
+	/** trueなら、このアクションを実行しても対象に向かって前進しない（囲まれている時など）。 */
+	public final boolean holdGround;
 
-	public Action(String id, ActionType type, String label, String targetEntityUuid, Integer targetSlot) {
+	public Action(String id, ActionType type, String label, String targetEntityUuid, Integer targetSlot, boolean holdGround) {
 		this.id = id;
 		this.type = type;
 		this.label = label;
 		this.targetEntityUuid = targetEntityUuid;
 		this.targetSlot = targetSlot;
+		this.holdGround = holdGround;
+	}
+
+	public Action(String id, ActionType type, String label, String targetEntityUuid, Integer targetSlot) {
+		this(id, type, label, targetEntityUuid, targetSlot, false);
 	}
 
 	public Action(String id, ActionType type, String label, String targetEntityUuid) {
-		this(id, type, label, targetEntityUuid, null);
+		this(id, type, label, targetEntityUuid, null, false);
 	}
 
 	public static Action of(String id, ActionType type, String label) {
-		return new Action(id, type, label, null, null);
+		return new Action(id, type, label, null, null, false);
 	}
 
 	@Override
 	public String toString() {
 		return id + "=" + type
 				+ (targetEntityUuid != null ? "(" + targetEntityUuid + ")" : "")
-				+ (targetSlot != null ? "[slot=" + targetSlot + "]" : "");
+				+ (targetSlot != null ? "[slot=" + targetSlot + "]" : "")
+				+ (holdGround ? "[hold]" : "");
 	}
 }

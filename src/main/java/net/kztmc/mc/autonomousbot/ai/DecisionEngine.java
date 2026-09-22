@@ -23,6 +23,10 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import net.minecraft.entity.Entity;
+import net.minecraft.entity.mob.Monster;
+import net.minecraft.util.math.Box;
+
 /**
  * Runs the perception -> Jev -> action pipeline.
  *
@@ -58,6 +62,9 @@ public final class DecisionEngine {
 	public volatile int debugCandidateCount = 0;
 	public volatile boolean debugLoopDetected = false;
 
+	private long cooldownReadySinceMs = -1;
+	private static final long CRIT_WAIT_GRACE_MS = 350L;
+
 	public DecisionEngine(BotConfig config) {
 		this.config = config;
 		this.aiWorkerExecutor = Executors.newSingleThreadExecutor(r -> {
@@ -76,6 +83,8 @@ public final class DecisionEngine {
 	public void tick(MinecraftClient client) {
 		actionExecutor.tick(client);
 		drainCompletedDecision(client);
+		reflexAttackTick(client);
+		reflexCombatHopTick(client);
 
 		if (!config.aiEnabled) {
 			return;
@@ -206,5 +215,111 @@ public final class DecisionEngine {
 			}
 			return map;
 		}
+	}
+
+	private void reflexAttackTick(MinecraftClient client) {
+		if (!config.aiEnabled || actionExecutor.isRetreating()) {
+			cooldownReadySinceMs = -1;
+			return;
+		}
+		ClientPlayerEntity player = client.player;
+		ClientWorld world = client.world;
+		if (player == null || world == null) {
+			return;
+		}
+
+		boolean cooldownReady = player.getAttackCooldownProgress(0.0f) >= CandidateActionGenerator.COOLDOWN_READY_THRESHOLD;
+		if (!cooldownReady) {
+			cooldownReadySinceMs = -1; // まだ満タンではない - 待機ウィンドウをリセット
+			return;
+		}
+
+		Box box = player.getBoundingBox().expand(CandidateActionGenerator.ATTACK_RANGE);
+		Entity nearest = null;
+		double nearestDist = Double.MAX_VALUE;
+		for (Entity e : world.getOtherEntities(player, box, ent -> ent instanceof Monster)) {
+			double d = player.distanceTo(e);
+			if (d <= CandidateActionGenerator.ATTACK_RANGE && d < nearestDist) {
+				nearest = e;
+				nearestDist = d;
+			}
+		}
+		if (nearest == null) {
+			cooldownReadySinceMs = -1;
+			return;
+		}
+
+		long now = System.currentTimeMillis();
+		if (cooldownReadySinceMs < 0) {
+			cooldownReadySinceMs = now; // 今tickで満タンになった - 猶予期間スタート
+		}
+
+		boolean isFalling = !player.isOnGround() && player.getVelocity().y < 0;
+		boolean graceExpired = now - cooldownReadySinceMs >= CRIT_WAIT_GRACE_MS;
+
+		if (!isFalling && !graceExpired) {
+			// もう少し待つ。reflexCombatHopTick()が常時ホップさせているので、
+			// 猶予期間内に落下中のタイミング(クリティカルの機会)が来るはず。
+			return;
+		}
+
+		if (isFalling) {
+			Action reflex = new Action("REFLEX-ATTACK", ActionType.CRITICAL_ATTACK,
+					"Reflex critical attack (falling, in range, cooldown ready)",
+					nearest.getUuid().toString());
+			actionExecutor.execute(client, reflex);
+		} else {
+			Action reflex = new Action("REFLEX-ATTACK", ActionType.SPRINT_ATTACK,
+					"Reflex sprint attack (grace period expired, in range, cooldown ready)",
+					nearest.getUuid().toString());
+			actionExecutor.execute(client, reflex);
+		}
+		cooldownReadySinceMs = -1;
+	}
+
+	/**
+	 * 敵が近く(射程+2ブロック以内)にいる間、接地していれば自動でホップし続ける。
+	 * これにより「待ち構えて迎撃」している間も自然に空中→落下の瞬間が生まれ、
+	 * reflexAttackTick()の一撃がクリティカル条件を満たしやすくなる。
+	 * Jevの判断は待たない、常時反射レイヤー。
+	 */
+	// 変更後
+	private void reflexCombatHopTick(MinecraftClient client) {
+		if (!config.aiEnabled || actionExecutor.isRetreating()) {
+			return;
+		}
+		ClientPlayerEntity player = client.player;
+		ClientWorld world = client.world;
+		if (player == null || world == null) {
+			return;
+		}
+
+		double engageRadius = CandidateActionGenerator.ATTACK_RANGE + 2.0D;
+		Box box = player.getBoundingBox().expand(engageRadius);
+
+		Entity nearest = null;
+		double nearestDist = Double.MAX_VALUE;
+		for (Entity e : world.getOtherEntities(player, box, ent -> ent instanceof Monster)) {
+			double d = player.distanceTo(e);
+			if (d < nearestDist) {
+				nearest = e;
+				nearestDist = d;
+			}
+		}
+		if (nearest == null) {
+			return;
+		}
+
+		boolean inAttackRange = nearestDist <= CandidateActionGenerator.ATTACK_RANGE;
+
+		if (inAttackRange) {
+			// 射程内 - 従来通り、着地際のクリティカルを取りやすくするホップ
+			if (player.isOnGround()) {
+				actionExecutor.execute(client, Action.of("REFLEX-HOP", ActionType.JUMP, "Reflex combat hop"));
+			}
+			return;
+		}
+
+		actionExecutor.approachTarget(player, nearest);
 	}
 }

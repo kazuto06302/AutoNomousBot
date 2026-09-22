@@ -33,7 +33,7 @@ public final class BotConfig {
 	/** Discouraged fallback - prefer the environment variable above. */
 	public String apiKeyPlaintextFallback = "";
 
-	public long decisionIntervalMs = 500L;
+	public long decisionIntervalMs = 250L;
 	public long decisionTimeoutMs = 5000L;
 	public int maxRetry = 2;
 

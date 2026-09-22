@@ -85,40 +85,32 @@ public final class ActionExecutor {
 			}
 			case LOOK -> findTarget(client, action.targetEntityUuid).ifPresent(target -> {
 				player.lookAt(EntityAnchorArgumentType.EntityAnchor.EYES, aimPoint(target, player));
-				updateApproach(player, target);
+				updateApproach(player, target, action.holdGround);
 			});
-			case ATTACK -> findTarget(client, action.targetEntityUuid).ifPresent(target -> {
-				player.lookAt(EntityAnchorArgumentType.EntityAnchor.EYES, aimPoint(target, player));
-				if (client.interactionManager != null) {
-					client.interactionManager.attackEntity(player, target);
-				}
-				movingForward = true;
-				movingBackward = false;
-			});
+//			case ATTACK -> findTarget(client, action.targetEntityUuid).ifPresent(target -> {
+//				player.lookAt(EntityAnchorArgumentType.EntityAnchor.EYES, aimPoint(target, player));
+//				if (client.interactionManager != null) {
+//					client.interactionManager.attackEntity(player, target);
+//				}
+//				updateApproach(player, target, action.holdGround);
+//			});
 			case SPRINT_ATTACK -> findTarget(client, action.targetEntityUuid).ifPresent(target -> {
 				player.lookAt(EntityAnchorArgumentType.EntityAnchor.EYES, aimPoint(target, player));
-				// Force sprint state right before the swing - the combat
-				// system reads isSprinting() at the moment of the attack
-				// to grant the extra sprint/knockback bonus.
 				player.setSprinting(true);
 				if (client.interactionManager != null) {
 					client.interactionManager.attackEntity(player, target);
 				}
-				movingForward = true;
-				movingBackward = false;
+				updateApproach(player, target, action.holdGround);
 			});
 			case CRITICAL_ATTACK -> findTarget(client, action.targetEntityUuid).ifPresent(target -> {
+				// 静止して振る。updateApproach()を呼ぶと「まだ距離があるから前進継続」で
+				// 即座に上書きされてしまい、Wキーが離れない原因になっていた。
+				movingForward = false;
+				movingBackward = false;
 				player.lookAt(EntityAnchorArgumentType.EntityAnchor.EYES, aimPoint(target, player));
 				if (client.interactionManager != null) {
 					client.interactionManager.attackEntity(player, target);
 				}
-				// NOTE: whether this actually lands as a critical hit depends
-				// on the player still being airborne+falling at THIS exact
-				// tick - the WorldState snapshot that made Jev choose this
-				// action can be ~1 decision-interval stale, so it's a
-				// best-effort attempt, not a guarantee. See caveat below.
-				movingForward = true;
-				movingBackward = false;
 			});
 			case SELECT_SLOT -> {
 				if (action.targetSlot != null) {
@@ -143,6 +135,23 @@ public final class ActionExecutor {
 			client.options.rightKey.setPressed(false);
 			client.options.jumpKey.setPressed(false);
 		}
+	}
+
+	public boolean isRetreating() {
+		return movingBackward;
+	}
+
+	public void approachTarget(ClientPlayerEntity player, Entity target) {
+		player.lookAt(EntityAnchorArgumentType.EntityAnchor.EYES, aimPoint(target, player));
+		player.setSprinting(true);
+		movingForward = true;
+		movingBackward = false;
+	}
+
+	private void updateApproach(ClientPlayerEntity player, Entity target, boolean holdGround) {
+		boolean shouldApproach = !holdGround && player.distanceTo(target) > CandidateActionGenerator.RETREAT_TRIGGER_RANGE;
+		movingForward = shouldApproach;
+		movingBackward = false;
 	}
 
 	private Optional<Entity> findTarget(MinecraftClient client, String uuidString) {
@@ -170,17 +179,5 @@ public final class ActionExecutor {
 			return living.getEyePos();
 		}
 		return new Vec3d(target.getX(), target.getY(), target.getZ()).add(0, target.getHeight() * 0.5, 0);
-	}
-
-	/**
-	 * Keeps closing the distance only while still far from the target.
-	 * Once within RETREAT_TRIGGER_RANGE we stop pushing forward - Jev still
-	 * has to explicitly choose RETREAT to back off, but at minimum we no
-	 * longer walk the player further into the mob on every LOOK/ATTACK cycle.
-	 */
-	private void updateApproach(ClientPlayerEntity player, Entity target) {
-		boolean shouldApproach = player.distanceTo(target) > CandidateActionGenerator.RETREAT_TRIGGER_RANGE;
-		movingForward = shouldApproach;
-		movingBackward = false;
 	}
 }
