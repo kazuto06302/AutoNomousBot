@@ -134,7 +134,9 @@ public final class DecisionEngine {
 						+ "WAIT should only be chosen when none of the other offered actions make sense right now "
 						+ "(e.g. genuinely nothing to explore, attack, or move toward). When the situation is calm and "
 						+ "no threat is nearby, prefer making progress (moving, looking around, jumping) over waiting. "
-						+ "Only prioritize safety (waiting/retreating) when actually low on health or a hostile mob is close.");
+						+ "Only prioritize safety (waiting/retreating) when actually low on health or a hostile mob is close."
+						+ " Once a hostile mob is already at melee range or closer, do not keep closing the "
+						+ "distance further - either attack from where you are, or retreat to create space.");
 
 		DecisionQuestion question = new DecisionQuestion("action", instructions.toString());
 		for (Action candidate : candidates) {

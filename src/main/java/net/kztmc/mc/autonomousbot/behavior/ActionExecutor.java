@@ -76,7 +76,7 @@ public final class ActionExecutor {
 				movingBackward = true;
 				movingForward = false;
 				findTarget(client, action.targetEntityUuid)
-						.ifPresent(target -> player.lookAt(EntityAnchorArgumentType.EntityAnchor.EYES, aimPoint(target)));
+						.ifPresent(target -> player.lookAt(EntityAnchorArgumentType.EntityAnchor.EYES, aimPoint(target, player)));
 			}
 			case JUMP -> {
 				if (player.isOnGround()) {
@@ -84,12 +84,11 @@ public final class ActionExecutor {
 				}
 			}
 			case LOOK -> findTarget(client, action.targetEntityUuid).ifPresent(target -> {
-				player.lookAt(EntityAnchorArgumentType.EntityAnchor.EYES, aimPoint(target));
-				movingForward = true;
-				movingBackward = false;
+				player.lookAt(EntityAnchorArgumentType.EntityAnchor.EYES, aimPoint(target, player));
+				updateApproach(player, target);
 			});
 			case ATTACK -> findTarget(client, action.targetEntityUuid).ifPresent(target -> {
-				player.lookAt(EntityAnchorArgumentType.EntityAnchor.EYES, aimPoint(target));
+				player.lookAt(EntityAnchorArgumentType.EntityAnchor.EYES, aimPoint(target, player));
 				if (client.interactionManager != null) {
 					client.interactionManager.attackEntity(player, target);
 				}
@@ -97,7 +96,7 @@ public final class ActionExecutor {
 				movingBackward = false;
 			});
 			case SPRINT_ATTACK -> findTarget(client, action.targetEntityUuid).ifPresent(target -> {
-				player.lookAt(EntityAnchorArgumentType.EntityAnchor.EYES, aimPoint(target));
+				player.lookAt(EntityAnchorArgumentType.EntityAnchor.EYES, aimPoint(target, player));
 				// Force sprint state right before the swing - the combat
 				// system reads isSprinting() at the moment of the attack
 				// to grant the extra sprint/knockback bonus.
@@ -109,7 +108,7 @@ public final class ActionExecutor {
 				movingBackward = false;
 			});
 			case CRITICAL_ATTACK -> findTarget(client, action.targetEntityUuid).ifPresent(target -> {
-				player.lookAt(EntityAnchorArgumentType.EntityAnchor.EYES, aimPoint(target));
+				player.lookAt(EntityAnchorArgumentType.EntityAnchor.EYES, aimPoint(target, player));
 				if (client.interactionManager != null) {
 					client.interactionManager.attackEntity(player, target);
 				}
@@ -163,10 +162,25 @@ public final class ActionExecutor {
 		}
 	}
 
-	private Vec3d aimPoint(Entity target) {
+	private Vec3d aimPoint(Entity target, ClientPlayerEntity player) {
+		if (target.getHeight() >= player.getStandingEyeHeight()) {
+			return new Vec3d(target.getX(), player.getEyeY(), target.getZ());
+		}
 		if (target instanceof LivingEntity living) {
 			return living.getEyePos();
 		}
 		return new Vec3d(target.getX(), target.getY(), target.getZ()).add(0, target.getHeight() * 0.5, 0);
+	}
+
+	/**
+	 * Keeps closing the distance only while still far from the target.
+	 * Once within RETREAT_TRIGGER_RANGE we stop pushing forward - Jev still
+	 * has to explicitly choose RETREAT to back off, but at minimum we no
+	 * longer walk the player further into the mob on every LOOK/ATTACK cycle.
+	 */
+	private void updateApproach(ClientPlayerEntity player, Entity target) {
+		boolean shouldApproach = player.distanceTo(target) > CandidateActionGenerator.RETREAT_TRIGGER_RANGE;
+		movingForward = shouldApproach;
+		movingBackward = false;
 	}
 }

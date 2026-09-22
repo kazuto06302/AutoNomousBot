@@ -13,7 +13,7 @@ public final class CandidateActionGenerator {
 
 	private static final double ATTACK_RANGE = 3.5D;
 	/** Closer than this, prefer creating space over standing and trading hits. */
-	private static final double RETREAT_TRIGGER_RANGE = 2.0D;
+	public static final double RETREAT_TRIGGER_RANGE = 3.0D;
 	/** Weapon must be at least this charged (getAttackCooldownProgress) to swing. */
 	private static final float COOLDOWN_READY_THRESHOLD = 0.9f;
 
@@ -41,14 +41,29 @@ public final class CandidateActionGenerator {
 			boolean cooldownReady = state.player.attackCooldownProgress >= COOLDOWN_READY_THRESHOLD;
 			boolean isFalling = !state.player.onGround && state.player.velocityY < 0;
 
+			// 最短距離の敵1体だけでなく、近くにいる敵対Mobの総数も見る
+			// (複数に囲まれている時は、1体だけを見ていると他の攻撃を食らう)
+			long hostilesNearby = state.nearbyEntities.stream()
+					.filter(e -> e.hostile)
+					.filter(e -> e.distance <= ATTACK_RANGE)
+					.count();
+			boolean surrounded = hostilesNearby >= 2;
+			// 囲まれている時は、単体の時よりも早めに離脱を検討させる
+			double retreatRange = surrounded ? ATTACK_RANGE : RETREAT_TRIGGER_RANGE;
+
 			unordered.add(new Action(null, ActionType.LOOK,
-					"Turn to face (and approach) the nearby hostile mob " + target.entityId
-							+ " (" + String.format("%.1f", target.distance) + " blocks away)",
+					"Turn to face (and approach) the nearest hostile mob " + target.entityId
+							+ " (" + String.format("%.1f", target.distance) + " blocks away)"
+							+ (surrounded ? ", but note you are surrounded by " + hostilesNearby + " hostile mobs" : ""),
 					target.entityUuid, null));
 
-			if (target.distance <= RETREAT_TRIGGER_RANGE) {
+			if (target.distance <= retreatRange) {
+				String urgency = surrounded
+						? " You are surrounded by " + hostilesNearby + " hostile mobs at close range - "
+						+ "retreating now is strongly advised to avoid taking hits from the others while focused on one target."
+						: "";
 				unordered.add(new Action(null, ActionType.RETREAT,
-						"Back away from " + target.entityId + " to create space instead of trading hits at melee range",
+						"Back away from " + target.entityId + " to create space instead of trading hits at melee range." + urgency,
 						target.entityUuid, null));
 			}
 
