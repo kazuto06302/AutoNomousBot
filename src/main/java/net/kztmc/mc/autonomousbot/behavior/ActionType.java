@@ -9,5 +9,6 @@ public enum ActionType {
 	MOVE_FORWARD,
 	JUMP,
 	LOOK,
-	ATTACK
+	ATTACK,
+	SELECT_SLOT
 }

@@ -4,6 +4,7 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.command.argument.EntityAnchorArgumentType;
 import net.minecraft.entity.Entity;
+import net.minecraft.entity.LivingEntity;
 import net.minecraft.util.math.Vec3d;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -11,35 +12,41 @@ import org.slf4j.LoggerFactory;
 import java.util.Optional;
 import java.util.UUID;
 
-/**
- * Translates a Decision/Action into actual client-side Minecraft input.
- *
- * Movement (and jumping) is done the same way the game itself reads input:
- * by holding down the configured {@code GameOptions} KeyBinding for a tick,
- * exactly like a held keyboard key would. This intentionally avoids any
- * Mixin into the input/movement internals - see design constraint "avoid
- * unnecessary Mixins, prefer existing Fabric/vanilla API".
- */
 public final class ActionExecutor {
 
 	private static final Logger LOGGER = LoggerFactory.getLogger("AutonomousBot/ActionExecutor");
 
-	// 変更後
-	/** Ticks to hold the jump key down for a single JUMP action (instantaneous tap). */
 	private static final int JUMP_HOLD_TICKS = 2;
 
-	// MOVE_FORWARD is continuous: held down every tick until a different
-	// action is chosen, instead of a short burst per decision cycle
-	// (a short burst was shorter than the decision interval, causing
-	// press/release/press/release stutter-stepping).
 	private boolean movingForward = false;
+	// We only ever release a key WE forced on - never the player's own
+	// real keyboard input. This is what fixes "pressing W gets cancelled".
+	private boolean forwardHeldByBot = false;
 	private int jumpHoldTicksRemaining = 0;
+	private boolean jumpHeldByBot = false;
 
 	public void tick(MinecraftClient client) {
-		if (client.options == null) return;
-		client.options.forwardKey.setPressed(movingForward);
-		client.options.jumpKey.setPressed(jumpHoldTicksRemaining > 0);
-		if (jumpHoldTicksRemaining > 0) jumpHoldTicksRemaining--;
+		if (client.options == null) {
+			return;
+		}
+
+		if (movingForward) {
+			client.options.forwardKey.setPressed(true);
+			forwardHeldByBot = true;
+		} else if (forwardHeldByBot) {
+			client.options.forwardKey.setPressed(false);
+			forwardHeldByBot = false;
+		}
+
+		boolean wantJump = jumpHoldTicksRemaining > 0;
+		if (wantJump) {
+			client.options.jumpKey.setPressed(true);
+			jumpHeldByBot = true;
+			jumpHoldTicksRemaining--;
+		} else if (jumpHeldByBot) {
+			client.options.jumpKey.setPressed(false);
+			jumpHeldByBot = false;
+		}
 	}
 
 	public void execute(MinecraftClient client, Action action) {
@@ -49,10 +56,7 @@ public final class ActionExecutor {
 		}
 
 		switch (action.type) {
-			case WAIT -> {
-				movingForward = false;
-			}
-			// 変更後
+			case WAIT -> movingForward = false;
 			case MOVE_FORWARD -> movingForward = true;
 			case JUMP -> {
 				if (player.isOnGround()) {
@@ -61,23 +65,32 @@ public final class ActionExecutor {
 			}
 			case LOOK -> findTarget(client, action.targetEntityUuid).ifPresent(target -> {
 				player.lookAt(EntityAnchorArgumentType.EntityAnchor.EYES, aimPoint(target));
-				movingForward = false;
+				// Keep closing the distance to whatever we just turned to
+				// face, instead of freezing.
+				movingForward = true;
 			});
 			case ATTACK -> findTarget(client, action.targetEntityUuid).ifPresent(target -> {
 				player.lookAt(EntityAnchorArgumentType.EntityAnchor.EYES, aimPoint(target));
 				if (client.interactionManager != null) {
 					client.interactionManager.attackEntity(player, target);
 				}
-				movingForward = false;
+				// Stay engaged rather than stopping mid-fight.
+				movingForward = true;
 			});
+			case SELECT_SLOT -> {
+				if (action.targetSlot != null) {
+					player.getInventory().setSelectedSlot(action.targetSlot);
+				}
+			}
 			default -> LOGGER.warn("No executor implemented for action type {}", action.type);
 		}
 	}
 
-	/** Immediately stops any held movement keys. Used by the emergency stop. */
 	public void releaseAll(MinecraftClient client) {
 		movingForward = false;
+		forwardHeldByBot = false;
 		jumpHoldTicksRemaining = 0;
+		jumpHeldByBot = false;
 		if (client.options != null) {
 			client.options.forwardKey.setPressed(false);
 			client.options.backKey.setPressed(false);
@@ -94,23 +107,20 @@ public final class ActionExecutor {
 		}
 		try {
 			UUID uuid = UUID.fromString(uuidString);
-			// Bounded search box (same radius EntityScanner used to find this
-			// target in the first place) rather than iterating every loaded entity.
 			return client.world
-				.getOtherEntities(player, player.getBoundingBox().expand(32.0D), e -> e.getUuid().equals(uuid))
-				.stream()
-				.findFirst();
+					.getOtherEntities(player, player.getBoundingBox().expand(32.0D), e -> e.getUuid().equals(uuid))
+					.stream()
+					.findFirst();
 		} catch (IllegalArgumentException e) {
 			LOGGER.warn("Invalid target UUID in decision: {}", uuidString);
 			return Optional.empty();
 		}
 	}
 
-	private net.minecraft.util.math.Vec3d aimPoint(Entity target) {
-		if (target instanceof net.minecraft.entity.LivingEntity living) {
+	private Vec3d aimPoint(Entity target) {
+		if (target instanceof LivingEntity living) {
 			return living.getEyePos();
 		}
-		Vec3d Pos = new Vec3d(target.getX(), target.getY(), target.getZ());
-		return Pos.add(0, target.getHeight() * 0.5, 0);
+		return new Vec3d(target.getX(), target.getY(), target.getZ()).add(0, target.getHeight() * 0.5, 0);
 	}
 }
