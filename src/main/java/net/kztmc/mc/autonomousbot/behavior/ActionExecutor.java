@@ -19,9 +19,9 @@ public final class ActionExecutor {
 	private static final int JUMP_HOLD_TICKS = 2;
 
 	private boolean movingForward = false;
-	// We only ever release a key WE forced on - never the player's own
-	// real keyboard input. This is what fixes "pressing W gets cancelled".
 	private boolean forwardHeldByBot = false;
+	private boolean movingBackward = false;
+	private boolean backwardHeldByBot = false;
 	private int jumpHoldTicksRemaining = 0;
 	private boolean jumpHeldByBot = false;
 
@@ -36,6 +36,14 @@ public final class ActionExecutor {
 		} else if (forwardHeldByBot) {
 			client.options.forwardKey.setPressed(false);
 			forwardHeldByBot = false;
+		}
+
+		if (movingBackward) {
+			client.options.backKey.setPressed(true);
+			backwardHeldByBot = true;
+		} else if (backwardHeldByBot) {
+			client.options.backKey.setPressed(false);
+			backwardHeldByBot = false;
 		}
 
 		boolean wantJump = jumpHoldTicksRemaining > 0;
@@ -56,8 +64,20 @@ public final class ActionExecutor {
 		}
 
 		switch (action.type) {
-			case WAIT -> movingForward = false;
-			case MOVE_FORWARD -> movingForward = true;
+			case WAIT -> {
+				movingForward = false;
+				movingBackward = false;
+			}
+			case MOVE_FORWARD -> {
+				movingForward = true;
+				movingBackward = false;
+			}
+			case RETREAT -> {
+				movingBackward = true;
+				movingForward = false;
+				findTarget(client, action.targetEntityUuid)
+						.ifPresent(target -> player.lookAt(EntityAnchorArgumentType.EntityAnchor.EYES, aimPoint(target)));
+			}
 			case JUMP -> {
 				if (player.isOnGround()) {
 					jumpHoldTicksRemaining = JUMP_HOLD_TICKS;
@@ -65,17 +85,41 @@ public final class ActionExecutor {
 			}
 			case LOOK -> findTarget(client, action.targetEntityUuid).ifPresent(target -> {
 				player.lookAt(EntityAnchorArgumentType.EntityAnchor.EYES, aimPoint(target));
-				// Keep closing the distance to whatever we just turned to
-				// face, instead of freezing.
 				movingForward = true;
+				movingBackward = false;
 			});
 			case ATTACK -> findTarget(client, action.targetEntityUuid).ifPresent(target -> {
 				player.lookAt(EntityAnchorArgumentType.EntityAnchor.EYES, aimPoint(target));
 				if (client.interactionManager != null) {
 					client.interactionManager.attackEntity(player, target);
 				}
-				// Stay engaged rather than stopping mid-fight.
 				movingForward = true;
+				movingBackward = false;
+			});
+			case SPRINT_ATTACK -> findTarget(client, action.targetEntityUuid).ifPresent(target -> {
+				player.lookAt(EntityAnchorArgumentType.EntityAnchor.EYES, aimPoint(target));
+				// Force sprint state right before the swing - the combat
+				// system reads isSprinting() at the moment of the attack
+				// to grant the extra sprint/knockback bonus.
+				player.setSprinting(true);
+				if (client.interactionManager != null) {
+					client.interactionManager.attackEntity(player, target);
+				}
+				movingForward = true;
+				movingBackward = false;
+			});
+			case CRITICAL_ATTACK -> findTarget(client, action.targetEntityUuid).ifPresent(target -> {
+				player.lookAt(EntityAnchorArgumentType.EntityAnchor.EYES, aimPoint(target));
+				if (client.interactionManager != null) {
+					client.interactionManager.attackEntity(player, target);
+				}
+				// NOTE: whether this actually lands as a critical hit depends
+				// on the player still being airborne+falling at THIS exact
+				// tick - the WorldState snapshot that made Jev choose this
+				// action can be ~1 decision-interval stale, so it's a
+				// best-effort attempt, not a guarantee. See caveat below.
+				movingForward = true;
+				movingBackward = false;
 			});
 			case SELECT_SLOT -> {
 				if (action.targetSlot != null) {
@@ -89,6 +133,8 @@ public final class ActionExecutor {
 	public void releaseAll(MinecraftClient client) {
 		movingForward = false;
 		forwardHeldByBot = false;
+		movingBackward = false;
+		backwardHeldByBot = false;
 		jumpHoldTicksRemaining = 0;
 		jumpHeldByBot = false;
 		if (client.options != null) {

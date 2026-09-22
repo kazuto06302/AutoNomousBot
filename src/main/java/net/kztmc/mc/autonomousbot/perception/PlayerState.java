@@ -23,4 +23,7 @@ public final class PlayerState {
 	public boolean onGround;
 
 	public int selectedSlot;
+
+	public float attackCooldownProgress;
+	public boolean sprinting;
 }

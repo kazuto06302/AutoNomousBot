@@ -58,6 +58,10 @@ public final class WorldStateCollector {
 		ps.onGround = player.isOnGround();
 
 		ps.selectedSlot = player.getInventory().getSelectedSlot();
+
+		ps.attackCooldownProgress = player.getAttackCooldownProgress(0.0f);
+		ps.sprinting = player.isSprinting();
+
 		return ps;
 	}
 
