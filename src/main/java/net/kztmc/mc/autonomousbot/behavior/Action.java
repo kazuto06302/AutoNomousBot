@@ -6,7 +6,6 @@ public final class Action {
 	public final String label;
 	public final String targetEntityUuid;
 	public final Integer targetSlot;
-	/** trueなら、このアクションを実行しても対象に向かって前進しない（囲まれている時など）。 */
 	public final boolean holdGround;
 
 	public Action(String id, ActionType type, String label, String targetEntityUuid, Integer targetSlot, boolean holdGround) {

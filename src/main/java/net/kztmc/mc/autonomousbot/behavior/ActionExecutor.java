@@ -180,4 +180,8 @@ public final class ActionExecutor {
 		}
 		return new Vec3d(target.getX(), target.getY(), target.getZ()).add(0, target.getHeight() * 0.5, 0);
 	}
+
+	public void stopApproaching() {
+		movingForward = false;
+	}
 }

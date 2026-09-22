@@ -313,7 +313,7 @@ public final class DecisionEngine {
 		boolean inAttackRange = nearestDist <= CandidateActionGenerator.ATTACK_RANGE;
 
 		if (inAttackRange) {
-			// 射程内 - 従来通り、着地際のクリティカルを取りやすくするホップ
+			actionExecutor.stopApproaching();
 			if (player.isOnGround()) {
 				actionExecutor.execute(client, Action.of("REFLEX-HOP", ActionType.JUMP, "Reflex combat hop"));
 			}

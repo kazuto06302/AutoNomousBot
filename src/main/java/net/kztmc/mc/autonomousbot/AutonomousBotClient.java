@@ -33,12 +33,19 @@ public final class AutonomousBotClient implements ClientModInitializer {
 	private static final Logger LOGGER = LoggerFactory.getLogger("AutonomousBot");
 
 	private static DecisionEngine decisionEngine;
+	private KeyBinding startKey;
 	private KeyBinding emergencyStopKey;
 
 	@Override
 	public void onInitializeClient() {
 		BotConfig config = BotConfig.getOrLoad();
 		decisionEngine = new DecisionEngine(config);
+
+		startKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
+				"key.autonomousbot.start",
+				GLFW.GLFW_KEY_L,
+				KeyBinding.Category.CREATIVE
+		));
 
 		emergencyStopKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
 			"key.autonomousbot.emergency_stop",
@@ -59,6 +66,16 @@ public final class AutonomousBotClient implements ClientModInitializer {
 			decisionEngine.emergencyStop(client);
 			if (client.player != null) {
 				client.player.sendMessage(Text.literal("[AutonomousBot] EMERGENCY STOP"), false);
+			}
+		}
+
+		while (startKey.wasPressed()) {
+			BotConfig config = BotConfig.getOrLoad();
+			config.aiEnabled = !config.aiEnabled;
+			config.save();
+
+			if (client.player != null) {
+				client.player.sendMessage(Text.literal("[AutonomousBot] Start triggered!"), false);
 			}
 		}
 		decisionEngine.tick(client);
