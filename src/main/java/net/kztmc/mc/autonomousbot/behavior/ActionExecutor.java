@@ -21,7 +21,11 @@ public final class ActionExecutor {
 	private static final Logger LOGGER = LoggerFactory.getLogger("AutonomousBot/ActionExecutor");
 
 	private static final int JUMP_HOLD_TICKS = 2;
-	private static final int FALL_CHECK_DEPTH = 4;
+	private static final int FALL_CHECK_DEPTH = 8;
+
+	private static final double STUCK_MOVE_THRESHOLD = 0.02D; // 1tickでこれ未満しか進んでいなければ「動けていない」
+	private static final int STUCK_TICKS_THRESHOLD = 8;       // これだけ連続で動けていなければ脱出行動を発動
+	private static final int UNSTUCK_DURATION_TICKS = 12;
 
 	private boolean movingForward = false;
 	private boolean forwardHeldByBot = false;
@@ -33,40 +37,26 @@ public final class ActionExecutor {
 	private int eatHoldTicksRemaining = 0;
 	private boolean useHeldByBot = false;
 
+	private Vec3d lastPos = null;
+	private int stuckTicks = 0;
+	private int unstuckTicksRemaining = 0;
+	private boolean strafeRight = true;
+	private boolean strafeHeldByBot = false;
+
 	public void tick(MinecraftClient client) {
 		if (client.options == null) {
 			return;
 		}
-
 		ClientPlayerEntity player = client.player;
 
-		if (movingForward) {
-			client.options.forwardKey.setPressed(true);
-			forwardHeldByBot = true;
-		} else if (forwardHeldByBot) {
-			client.options.forwardKey.setPressed(false);
-			forwardHeldByBot = false;
-		}
+		updateStuckDetection(player);
 
-		if (movingBackward) {
-			client.options.backKey.setPressed(true);
-			backwardHeldByBot = true;
-		} else if (backwardHeldByBot) {
-			client.options.backKey.setPressed(false);
-			backwardHeldByBot = false;
-		}
+		boolean unstucking = unstuckTicksRemaining > 0;
 
-		boolean wantJump = jumpHoldTicksRemaining > 0;
-		if (wantJump) {
-			client.options.jumpKey.setPressed(true);
-			jumpHeldByBot = true;
-			jumpHoldTicksRemaining--;
-		} else if (jumpHeldByBot) {
-			client.options.jumpKey.setPressed(false);
-			jumpHeldByBot = false;
-		}
-
-		boolean wantForward = movingForward && player != null
+		// 脱出行動中は前進/後退の意図(movingForward/movingBackward)自体は
+		// 保持したまま、キー入力だけ一時的に横移動+ジャンプへ差し替える。
+		// 脱出が終われば元の移動意図に自動的に戻る。
+		boolean wantForward = !unstucking && movingForward && player != null
 				&& !isHazardAhead(client, player, player.getYaw());
 		if (wantForward) {
 			client.options.forwardKey.setPressed(true);
@@ -76,7 +66,7 @@ public final class ActionExecutor {
 			forwardHeldByBot = false;
 		}
 
-		boolean wantBackward = movingBackward && player != null
+		boolean wantBackward = !unstucking && movingBackward && player != null
 				&& !isHazardAhead(client, player, player.getYaw() + 180.0f);
 		if (wantBackward) {
 			client.options.backKey.setPressed(true);
@@ -84,6 +74,29 @@ public final class ActionExecutor {
 		} else if (backwardHeldByBot) {
 			client.options.backKey.setPressed(false);
 			backwardHeldByBot = false;
+		}
+
+		boolean wantStrafe = unstucking;
+		if (wantStrafe) {
+			(strafeRight ? client.options.rightKey : client.options.leftKey).setPressed(true);
+			strafeHeldByBot = true;
+			unstuckTicksRemaining--;
+		} else if (strafeHeldByBot) {
+			client.options.leftKey.setPressed(false);
+			client.options.rightKey.setPressed(false);
+			strafeHeldByBot = false;
+		}
+
+		boolean wantJump = jumpHoldTicksRemaining > 0 || unstucking;
+		if (wantJump) {
+			client.options.jumpKey.setPressed(true);
+			jumpHeldByBot = true;
+			if (jumpHoldTicksRemaining > 0) {
+				jumpHoldTicksRemaining--;
+			}
+		} else if (jumpHeldByBot) {
+			client.options.jumpKey.setPressed(false);
+			jumpHeldByBot = false;
 		}
 
 		boolean wantEat = eatHoldTicksRemaining > 0;
@@ -95,6 +108,42 @@ public final class ActionExecutor {
 			client.options.useKey.setPressed(false);
 			useHeldByBot = false;
 		}
+	}
+
+	/**
+	 * 「前進/後退しようとしているのに、実際にはほぼ動いていない」状態を検知する。
+	 * 壁に押し付けられている・段差に引っかかっている等で発生する。一定tick
+	 * 連続で検知したら、横移動+ジャンプの脱出行動を一定時間発動する。
+	 */
+	private void updateStuckDetection(ClientPlayerEntity player) {
+		if (player == null) {
+			lastPos = null;
+			stuckTicks = 0;
+			return;
+		}
+		Vec3d currentPos = new Vec3d(player.getX(), player.getY(), player.getZ());
+
+		boolean tryingToMove = (movingForward || movingBackward) && unstuckTicksRemaining <= 0;
+		if (tryingToMove && lastPos != null) {
+			double dx = currentPos.x - lastPos.x;
+			double dz = currentPos.z - lastPos.z;
+			double horizontalMoved = Math.sqrt(dx * dx + dz * dz);
+			if (horizontalMoved < STUCK_MOVE_THRESHOLD) {
+				stuckTicks++;
+			} else {
+				stuckTicks = 0;
+			}
+		} else {
+			stuckTicks = 0;
+		}
+
+		if (stuckTicks >= STUCK_TICKS_THRESHOLD) {
+			unstuckTicksRemaining = UNSTUCK_DURATION_TICKS;
+			strafeRight = !strafeRight; // 毎回反対側を試す(片側が壁ならもう片側は空いている可能性が高い)
+			stuckTicks = 0;
+		}
+
+		lastPos = currentPos;
 	}
 
 	public void execute(MinecraftClient client, Action action) {
@@ -176,6 +225,12 @@ public final class ActionExecutor {
 		jumpHeldByBot = false;
 		eatHoldTicksRemaining = 0;
 		useHeldByBot = false;
+
+		unstuckTicksRemaining = 0;
+		strafeHeldByBot = false;
+		stuckTicks = 0;
+		lastPos = null;
+
 		if (client.options != null) {
 			client.options.forwardKey.setPressed(false);
 			client.options.backKey.setPressed(false);
