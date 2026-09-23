@@ -214,7 +214,6 @@ public final class DecisionEngine {
 		}
 	}
 
-	// 変更後
 	private void reflexAttackTick(MinecraftClient client) {
 		if (!config.aiEnabled || actionExecutor.isRetreating()) {
 			return;
@@ -230,9 +229,6 @@ public final class DecisionEngine {
 			return;
 		}
 
-		// 落下中でなければ何もしない - 待たずに次tickでまた判定するだけ。
-		// 常時ホップしているので、クールダウンが満タンになってから落下中の
-		// 瞬間が来るまでは高々1ホップ分(1秒未満)で、猶予タイマーは不要。
 		boolean isFalling = !player.isOnGround() && player.getVelocity().y < 0;
 		if (!isFalling) {
 			return;
@@ -251,18 +247,27 @@ public final class DecisionEngine {
 		if (nearest == null) {
 			return;
 		}
+
+		if (!actionExecutor.wouldHit(player, nearest, false)) {
+			return;
+		}
+
+		Action reflex = new Action("REFLEX-ATTACK", ActionType.CRITICAL_ATTACK,
+				"Reflex critical attack (falling, in range, cooldown ready, hitbox check passed)",
+				nearest.getUuid().toString());
+		actionExecutor.execute(client, reflex);
 	}
 
 	/**
 	 * 常時反射レイヤー：Jevの判断を待たず、毎tick「間合い」を維持する。
-	 *   ENGAGE_MIN_RANGE 未満        -> 自動で後退（近すぎる）
-	 *   ENGAGE_MIN_RANGE 〜 ATTACK_RANGE -> その場で静止してホップ（クリティカル狙い、いわゆる待ち構え）
-	 *   ATTACK_RANGE 〜 APPROACH_RADIUS  -> 自動で接近
-	 *   それ以上遠い                  -> 何もしない（Jevの通常判断に任せる）
+	 *
+	 * NOTE: 待ち構える上限は必ずATTACK_RANGE(実際に殴れる距離)以下にする。
+	 * 一度これをATTACK_RANGEより外側(3.5〜5.0など)に広げてしまい、
+	 * reflexAttackTick()が絶対に発動できない位置で待ち続けるバグを作って
+	 * しまったことがあるので、ここは意図的にATTACK_RANGEを上限にしている。
+	 * 「もう少し手前で待ちたい」場合はENGAGE_MIN_RANGEだけを広げること。
 	 */
-
 	private static final double ENGAGE_MIN_RANGE = 3.5D;
-	private static final double ENGAGE_MAX_RANGE = 5.0D;
 
 	private void reflexCombatHopTick(MinecraftClient client) {
 		if (!config.aiEnabled) {
@@ -274,7 +279,7 @@ public final class DecisionEngine {
 			return;
 		}
 
-		double approachRadius = ENGAGE_MAX_RANGE + 2.0D;
+		double approachRadius = CandidateActionGenerator.ATTACK_RANGE + 2.0D;
 		Box box = player.getBoundingBox().expand(approachRadius);
 
 		Entity nearest = null;
@@ -293,13 +298,11 @@ public final class DecisionEngine {
 		}
 
 		if (nearestDist < ENGAGE_MIN_RANGE) {
-			// 待ち構えたい間合いより近い - 自動で離れる
 			actionExecutor.reflexRetreat(player, nearest);
 			return;
 		}
 
-		if (nearestDist <= ENGAGE_MAX_RANGE) {
-			// 待ち構える間合い - 前進も後退もせず、ホップして様子を見る
+		if (nearestDist <= CandidateActionGenerator.ATTACK_RANGE) {
 			actionExecutor.stopApproaching();
 			actionExecutor.stopRetreating();
 			if (player.isOnGround()) {
@@ -308,7 +311,6 @@ public final class DecisionEngine {
 			return;
 		}
 
-		// 待ち構える間合いより遠い - 接近する
 		actionExecutor.stopRetreating();
 		actionExecutor.approachTarget(player, nearest);
 	}

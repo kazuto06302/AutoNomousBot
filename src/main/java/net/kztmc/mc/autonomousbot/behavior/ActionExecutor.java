@@ -5,6 +5,7 @@ import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.command.argument.EntityAnchorArgumentType;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.LivingEntity;
+import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Vec3d;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -87,13 +88,13 @@ public final class ActionExecutor {
 				player.lookAt(EntityAnchorArgumentType.EntityAnchor.EYES, aimPoint(target, player));
 				updateApproach(player, target, action.holdGround);
 			});
-//			case ATTACK -> findTarget(client, action.targetEntityUuid).ifPresent(target -> {
-//				player.lookAt(EntityAnchorArgumentType.EntityAnchor.EYES, aimPoint(target, player));
-//				if (client.interactionManager != null) {
-//					client.interactionManager.attackEntity(player, target);
-//				}
-//				updateApproach(player, target, action.holdGround);
-//			});
+			case ATTACK -> findTarget(client, action.targetEntityUuid).ifPresent(target -> {
+				player.lookAt(EntityAnchorArgumentType.EntityAnchor.EYES, aimPoint(target, player));
+				if (client.interactionManager != null) {
+					client.interactionManager.attackEntity(player, target);
+				}
+				updateApproach(player, target, action.holdGround);
+			});
 			case SPRINT_ATTACK -> findTarget(client, action.targetEntityUuid).ifPresent(target -> {
 				player.lookAt(EntityAnchorArgumentType.EntityAnchor.EYES, aimPoint(target, player));
 				player.setSprinting(true);
@@ -105,6 +106,8 @@ public final class ActionExecutor {
 			case CRITICAL_ATTACK -> findTarget(client, action.targetEntityUuid).ifPresent(target -> {
 				movingForward = false;
 				movingBackward = false;
+				// allowHorizontalOverride=false: ジャンプ中は水平合わせせず、
+				// 素直に敵の実座標を狙う（水平合わせだと空中で明後日の方向を向く）。
 				player.lookAt(EntityAnchorArgumentType.EntityAnchor.EYES, aimPoint(target, player, false));
 				if (client.interactionManager != null) {
 					client.interactionManager.attackEntity(player, target);
@@ -146,8 +149,40 @@ public final class ActionExecutor {
 		movingBackward = false;
 	}
 
+	public void stopApproaching() {
+		movingForward = false;
+	}
+
+	public void reflexRetreat(ClientPlayerEntity player, Entity target) {
+		player.lookAt(EntityAnchorArgumentType.EntityAnchor.EYES, aimPoint(target, player));
+		movingBackward = true;
+		movingForward = false;
+	}
+
+	public void stopRetreating() {
+		movingBackward = false;
+	}
+
+	/**
+	 * プレイヤーの目線からaimPoint()への直線が、実際に相手の当たり判定
+	 * ボックスと交差するかを確認する。射程内かどうかだけでなく、
+	 * 「その姿勢で振ったら本当に当たるか」をチェックしたい場合に使う。
+	 */
+	public boolean wouldHit(ClientPlayerEntity player, Entity target, boolean allowHorizontalOverride) {
+		Vec3d eye = player.getEyePos();
+		Vec3d aim = aimPoint(target, player, allowHorizontalOverride);
+		Vec3d toAim = aim.subtract(eye);
+		double dist = toAim.length();
+		if (dist < 0.0001D) {
+			return true;
+		}
+		Vec3d rayEnd = eye.add(toAim.normalize().multiply(dist + 0.5D));
+		return target.getBoundingBox().raycast(eye, rayEnd).isPresent();
+	}
+
 	private void updateApproach(ClientPlayerEntity player, Entity target, boolean holdGround) {
-        movingForward = !holdGround && player.distanceTo(target) > CandidateActionGenerator.RETREAT_TRIGGER_RANGE;
+		boolean shouldApproach = !holdGround && player.distanceTo(target) > CandidateActionGenerator.RETREAT_TRIGGER_RANGE;
+		movingForward = shouldApproach;
 		movingBackward = false;
 	}
 
@@ -168,7 +203,6 @@ public final class ActionExecutor {
 		}
 	}
 
-	// 変更後
 	private Vec3d aimPoint(Entity target, ClientPlayerEntity player) {
 		return aimPoint(target, player, true);
 	}
@@ -181,31 +215,5 @@ public final class ActionExecutor {
 			return living.getEyePos();
 		}
 		return new Vec3d(target.getX(), target.getY(), target.getZ()).add(0, target.getHeight() * 0.5, 0);
-	}
-
-	public void stopApproaching() {
-		movingForward = false;
-	}
-
-	public void reflexRetreat(ClientPlayerEntity player, Entity target) {
-		player.lookAt(EntityAnchorArgumentType.EntityAnchor.EYES, aimPoint(target, player));
-		movingBackward = true;
-		movingForward = false;
-	}
-
-	public void stopRetreating() {
-		movingBackward = false;
-	}
-
-	public boolean wouldHit(ClientPlayerEntity player, Entity target, boolean allowHorizontalOverride) {
-		Vec3d eye = player.getEyePos();
-		Vec3d aim = aimPoint(target, player, allowHorizontalOverride);
-		Vec3d toAim = aim.subtract(eye);
-		double dist = toAim.length();
-		if (dist < 0.0001D) {
-			return true;
-		}
-		Vec3d rayEnd = eye.add(toAim.normalize().multiply(dist + 0.5D));
-		return target.getBoundingBox().raycast(eye, rayEnd).isPresent();
 	}
 }

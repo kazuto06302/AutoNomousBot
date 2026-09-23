@@ -11,7 +11,7 @@ import java.util.Optional;
 
 public final class CandidateActionGenerator {
 
-	public static final double ATTACK_RANGE = 3.5D;
+	public static final double ATTACK_RANGE = 4D;
 	public static final double RETREAT_TRIGGER_RANGE = 2.5D;
 	public static final float COOLDOWN_READY_THRESHOLD = 0.9f;
 
@@ -69,11 +69,9 @@ public final class CandidateActionGenerator {
 								+ String.format("%.1f", target.distance) + " blocks away)",
 						target.entityUuid, null, surrounded));
 
-				if (!state.player.sprinting) {
-					unordered.add(new Action(null, ActionType.SPRINT_ATTACK,
-							"Sprint in and attack " + target.entityId + " for a sprint/knockback hit",
-							target.entityUuid, null, surrounded));
-				}
+				unordered.add(new Action(null, ActionType.SPRINT_ATTACK,
+						"Sprint in and attack " + target.entityId + " for a sprint/knockback hit",
+						target.entityUuid, null, surrounded));
 
 				if (isFalling) {
 					unordered.add(new Action(null, ActionType.CRITICAL_ATTACK,
