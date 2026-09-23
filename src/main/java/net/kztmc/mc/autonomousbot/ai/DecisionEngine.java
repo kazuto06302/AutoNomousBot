@@ -310,16 +310,21 @@ public final class DecisionEngine {
 			return;
 		}
 
+		double approachStopRange = CandidateActionGenerator.ATTACK_RANGE - 2.5D;
+		boolean shouldStopApproaching = nearestDist <= approachStopRange;
 		boolean inAttackRange = nearestDist <= CandidateActionGenerator.ATTACK_RANGE;
 
-		if (inAttackRange) {
+		if (shouldStopApproaching) {
+			// 射程手前で止める(慣性で相手の懐に潜り込んで反撃を食らうのを防ぐ)。
+			// 毎tick呼んで確実にキーを離しておく。
 			actionExecutor.stopApproaching();
-			if (player.isOnGround()) {
+			if (inAttackRange && player.isOnGround()) {
 				actionExecutor.execute(client, Action.of("REFLEX-HOP", ActionType.JUMP, "Reflex combat hop"));
 			}
 			return;
 		}
 
+		// まだ射程手前の停止ラインより外 - 攻撃モーションは出さず、接近だけする
 		actionExecutor.approachTarget(player, nearest);
 	}
 }
