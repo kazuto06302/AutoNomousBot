@@ -11,7 +11,8 @@ public enum ActionType {
 	LOOK,
 	ATTACK,
 	SELECT_SLOT,
-	RETREAT,          // 追加：敵から離れる
-	SPRINT_ATTACK,     // 追加：スプリント状態で攻撃（ダッシュ斬り＝ノックバック増）
-	CRITICAL_ATTACK
+	RETREAT,
+	SPRINT_ATTACK,
+	CRITICAL_ATTACK,
+	EAT
 }

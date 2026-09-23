@@ -4,16 +4,46 @@ import net.kztmc.mc.autonomousbot.perception.EntitySummary;
 import net.kztmc.mc.autonomousbot.perception.ItemSummary;
 import net.kztmc.mc.autonomousbot.perception.WorldState;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.Optional;
+import java.util.*;
 
 public final class CandidateActionGenerator {
 
 	public static final double ATTACK_RANGE = 4D;
 	public static final double RETREAT_TRIGGER_RANGE = 2.5D;
 	public static final float COOLDOWN_READY_THRESHOLD = 0.9f;
+
+	private static final Set<String> FOOD_ITEM_IDS = Set.of(
+			"minecraft:apple",
+			"minecraft:golden_apple",
+			"minecraft:enchanted_golden_apple",
+			"minecraft:bread",
+			"minecraft:cooked_beef",
+			"minecraft:cooked_porkchop",
+			"minecraft:cooked_chicken",
+			"minecraft:cooked_mutton",
+			"minecraft:cooked_rabbit",
+			"minecraft:cooked_cod",
+			"minecraft:cooked_salmon",
+			"minecraft:baked_potato",
+			"minecraft:carrot",
+			"minecraft:golden_carrot",
+			"minecraft:potato",
+			"minecraft:beetroot",
+			"minecraft:melon_slice",
+			"minecraft:sweet_berries",
+			"minecraft:glow_berries",
+			"minecraft:pumpkin_pie",
+			"minecraft:mushroom_stew",
+			"minecraft:rabbit_stew",
+			"minecraft:beetroot_soup",
+			"minecraft:dried_kelp",
+			"minecraft:honey_bottle",
+			"minecraft:chorus_fruit",
+			"minecraft:suspicious_stew"
+	);
+
+	private static final int HUNGER_EAT_THRESHOLD = 18; // これ未満なら食べる候補を出す
+	private static final int HUNGER_URGENT_THRESHOLD = 6; // これ以下なら緊急扱い
 
 	private CandidateActionGenerator() {
 	}
@@ -90,6 +120,19 @@ public final class CandidateActionGenerator {
 			});
 		}
 
+		if (state.player.food < HUNGER_EAT_THRESHOLD) {
+			findFoodSlot(state).ifPresent(food -> {
+				boolean urgent = state.player.food <= HUNGER_URGENT_THRESHOLD;
+				unordered.add(new Action(null, ActionType.EAT,
+						(urgent
+								? "Hunger is critically low (" + state.player.food + "/20) - eat now to avoid starvation "
+								+ "and keep health regeneration working: "
+								: "Food is not full (" + state.player.food + "/20) - eat ")
+								+ food.itemId + " from hotbar slot " + (food.slot + 1),
+						null, food.slot));
+			});
+		}
+
 		Collections.shuffle(unordered);
 
 		List<Action> candidates = new ArrayList<>();
@@ -111,6 +154,13 @@ public final class CandidateActionGenerator {
 		return state.inventory.stream()
 				.filter(i -> i.slot >= 0 && i.slot <= 8)
 				.filter(i -> i.itemId.endsWith("_axe"))
+				.findFirst();
+	}
+
+	private static Optional<ItemSummary> findFoodSlot(WorldState state) {
+		return state.inventory.stream()
+				.filter(i -> i.slot >= 0 && i.slot <= 8)
+				.filter(i -> FOOD_ITEM_IDS.contains(i.itemId))
 				.findFirst();
 	}
 }

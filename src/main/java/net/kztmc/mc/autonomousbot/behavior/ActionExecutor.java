@@ -25,6 +25,9 @@ public final class ActionExecutor {
 	private boolean backwardHeldByBot = false;
 	private int jumpHoldTicksRemaining = 0;
 	private boolean jumpHeldByBot = false;
+	private static final int EAT_HOLD_TICKS = 40;
+	private int eatHoldTicksRemaining = 0;
+	private boolean useHeldByBot = false;
 
 	public void tick(MinecraftClient client) {
 		if (client.options == null) {
@@ -55,6 +58,16 @@ public final class ActionExecutor {
 		} else if (jumpHeldByBot) {
 			client.options.jumpKey.setPressed(false);
 			jumpHeldByBot = false;
+		}
+
+		boolean wantEat = eatHoldTicksRemaining > 0;
+		if (wantEat) {
+			client.options.useKey.setPressed(true);
+			useHeldByBot = true;
+			eatHoldTicksRemaining--;
+		} else if (useHeldByBot) {
+			client.options.useKey.setPressed(false);
+			useHeldByBot = false;
 		}
 	}
 
@@ -118,6 +131,12 @@ public final class ActionExecutor {
 					player.getInventory().setSelectedSlot(action.targetSlot);
 				}
 			}
+			case EAT -> {
+				if (action.targetSlot != null) {
+					player.getInventory().setSelectedSlot(action.targetSlot);
+				}
+				eatHoldTicksRemaining = EAT_HOLD_TICKS;
+			}
 			default -> LOGGER.warn("No executor implemented for action type {}", action.type);
 		}
 	}
@@ -129,6 +148,8 @@ public final class ActionExecutor {
 		backwardHeldByBot = false;
 		jumpHoldTicksRemaining = 0;
 		jumpHeldByBot = false;
+		eatHoldTicksRemaining = 0;
+		useHeldByBot = false;
 		if (client.options != null) {
 			client.options.forwardKey.setPressed(false);
 			client.options.backKey.setPressed(false);
@@ -140,6 +161,10 @@ public final class ActionExecutor {
 
 	public boolean isRetreating() {
 		return movingBackward;
+	}
+
+	public boolean isEating() {
+		return eatHoldTicksRemaining > 0;
 	}
 
 	public void approachTarget(ClientPlayerEntity player, Entity target) {

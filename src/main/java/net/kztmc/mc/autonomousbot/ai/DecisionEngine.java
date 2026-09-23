@@ -142,7 +142,9 @@ public final class DecisionEngine {
 						+ "no threat is nearby, prefer making progress (moving, looking around, jumping) over waiting. "
 						+ "Only prioritize safety (waiting/retreating) when actually low on health or a hostile mob is close."
 						+ " Once a hostile mob is already at melee range or closer, do not keep closing the "
-						+ "distance further - either attack from where you are, or retreat to create space.");
+						+ "distance further - either attack from where you are, or retreat to create space."
+						+ " If hunger is critically low, eating is more urgent than engaging in combat unless you also need to retreat."
+		);
 
 		DecisionQuestion question = new DecisionQuestion("action", instructions.toString());
 		for (Action candidate : candidates) {
@@ -215,7 +217,7 @@ public final class DecisionEngine {
 	}
 
 	private void reflexAttackTick(MinecraftClient client) {
-		if (!config.aiEnabled || actionExecutor.isRetreating()) {
+		if (!config.aiEnabled || actionExecutor.isRetreating() || actionExecutor.isEating()) {
 			return;
 		}
 		ClientPlayerEntity player = client.player;
@@ -270,7 +272,7 @@ public final class DecisionEngine {
 	private static final double ENGAGE_MIN_RANGE = 3.5D;
 
 	private void reflexCombatHopTick(MinecraftClient client) {
-		if (!config.aiEnabled) {
+		if (!config.aiEnabled || actionExecutor.isEating()) {
 			return;
 		}
 		ClientPlayerEntity player = client.player;
