@@ -1,10 +1,13 @@
 package net.kztmc.mc.autonomousbot.behavior;
 
+import net.minecraft.block.Blocks;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.command.argument.EntityAnchorArgumentType;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.LivingEntity;
+import net.minecraft.registry.tag.FluidTags;
+import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Vec3d;
 import org.slf4j.Logger;
@@ -18,6 +21,7 @@ public final class ActionExecutor {
 	private static final Logger LOGGER = LoggerFactory.getLogger("AutonomousBot/ActionExecutor");
 
 	private static final int JUMP_HOLD_TICKS = 2;
+	private static final int FALL_CHECK_DEPTH = 4;
 
 	private boolean movingForward = false;
 	private boolean forwardHeldByBot = false;
@@ -33,6 +37,8 @@ public final class ActionExecutor {
 		if (client.options == null) {
 			return;
 		}
+
+		ClientPlayerEntity player = client.player;
 
 		if (movingForward) {
 			client.options.forwardKey.setPressed(true);
@@ -58,6 +64,26 @@ public final class ActionExecutor {
 		} else if (jumpHeldByBot) {
 			client.options.jumpKey.setPressed(false);
 			jumpHeldByBot = false;
+		}
+
+		boolean wantForward = movingForward && player != null
+				&& !isHazardAhead(client, player, player.getYaw());
+		if (wantForward) {
+			client.options.forwardKey.setPressed(true);
+			forwardHeldByBot = true;
+		} else if (forwardHeldByBot) {
+			client.options.forwardKey.setPressed(false);
+			forwardHeldByBot = false;
+		}
+
+		boolean wantBackward = movingBackward && player != null
+				&& !isHazardAhead(client, player, player.getYaw() + 180.0f);
+		if (wantBackward) {
+			client.options.backKey.setPressed(true);
+			backwardHeldByBot = true;
+		} else if (backwardHeldByBot) {
+			client.options.backKey.setPressed(false);
+			backwardHeldByBot = false;
 		}
 
 		boolean wantEat = eatHoldTicksRemaining > 0;
@@ -240,5 +266,41 @@ public final class ActionExecutor {
 			return living.getEyePos();
 		}
 		return new Vec3d(target.getX(), target.getY(), target.getZ()).add(0, target.getHeight() * 0.5, 0);
+	}
+
+	private boolean isHazardAhead(MinecraftClient client, ClientPlayerEntity player, double yawDegrees) {
+		if (client.world == null) {
+			return false;
+		}
+		double yawRad = Math.toRadians(yawDegrees);
+		int dx = (int) Math.round(-Math.sin(yawRad));
+		int dz = (int) Math.round(Math.cos(yawRad));
+		if (dx == 0 && dz == 0) {
+			return false;
+		}
+
+		BlockPos ahead = player.getBlockPos().add(dx, 0, dz);
+
+		if (isDangerousBlock(client, ahead) || isDangerousBlock(client, ahead.up())) {
+			return true;
+		}
+
+		for (int dy = 0; dy > -FALL_CHECK_DEPTH; dy--) {
+			BlockPos below = ahead.add(0, dy, 0);
+			if (isDangerousBlock(client, below)) {
+				return true; // 落下の途中に溶岩などがあっても危険
+			}
+			if (!client.world.getBlockState(below).isAir()) {
+				return false; // FALL_CHECK_DEPTH以内に着地できる地面がある
+			}
+		}
+		return true; // 地面が見つからない = 危険な落下
+	}
+
+	private boolean isDangerousBlock(MinecraftClient client, BlockPos pos) {
+		var state = client.world.getBlockState(pos);
+		return state.getFluidState().isIn(FluidTags.LAVA)
+				|| state.isOf(Blocks.FIRE)
+				|| state.isOf(Blocks.MAGMA_BLOCK);
 	}
 }

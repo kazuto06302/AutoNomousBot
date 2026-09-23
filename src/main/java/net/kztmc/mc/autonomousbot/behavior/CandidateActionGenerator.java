@@ -11,6 +11,7 @@ public final class CandidateActionGenerator {
 	public static final double ATTACK_RANGE = 4D;
 	public static final double RETREAT_TRIGGER_RANGE = 2.5D;
 	public static final float COOLDOWN_READY_THRESHOLD = 0.9f;
+	private static final double EAT_SAFE_RADIUS = 6.0D;
 
 	private static final Set<String> FOOD_ITEM_IDS = Set.of(
 			"minecraft:apple",
@@ -120,17 +121,37 @@ public final class CandidateActionGenerator {
 			});
 		}
 
-		if (state.player.food < HUNGER_EAT_THRESHOLD) {
-			findFoodSlot(state).ifPresent(food -> {
-				boolean urgent = state.player.food <= HUNGER_URGENT_THRESHOLD;
-				unordered.add(new Action(null, ActionType.EAT,
-						(urgent
-								? "Hunger is critically low (" + state.player.food + "/20) - eat now to avoid starvation "
-								+ "and keep health regeneration working: "
-								: "Food is not full (" + state.player.food + "/20) - eat ")
-								+ food.itemId + " from hotbar slot " + (food.slot + 1),
-						null, food.slot));
-			});
+		boolean hungryEnough = state.player.food < HUNGER_EAT_THRESHOLD;
+		boolean healthLow = state.player.health <= state.player.maxHealth * 0.5f;
+
+		if (hungryEnough || healthLow) {
+			// 安全圏内(EAT_SAFE_RADIUS)に敵対Mobがいるなら、食べる前にまず離れる
+			// 候補を出す - 食事は約1.6秒(32tick)硬直するので、近くに敵がいる
+			// 状態で始めると殴られながら食べることになるため。
+			Optional<EntitySummary> threatWhileEating = state.nearbyEntities.stream()
+					.filter(e -> e.hostile)
+					.filter(e -> e.distance <= EAT_SAFE_RADIUS)
+					.min((a, b) -> Double.compare(a.distance, b.distance));
+
+			if (threatWhileEating.isPresent()) {
+				EntitySummary threat = threatWhileEating.get();
+				unordered.add(new Action(null, ActionType.RETREAT,
+						"A hostile mob (" + threat.entityId + ", " + String.format("%.1f", threat.distance)
+								+ " blocks away) is nearby and you need to eat - back away to a safe distance first",
+						threat.entityUuid, null));
+			} else {
+				findFoodSlot(state).ifPresent(food -> {
+					boolean urgent = state.player.food <= HUNGER_URGENT_THRESHOLD || healthLow;
+					unordered.add(new Action(null, ActionType.EAT,
+							(urgent
+									? "Health/hunger is critically low (HP " + String.format("%.0f", state.player.health)
+									+ "/" + String.format("%.0f", state.player.maxHealth) + ", food " + state.player.food
+									+ "/20) - eat now: "
+									: "Food is not full (" + state.player.food + "/20) - eat ")
+									+ food.itemId + " from hotbar slot " + (food.slot + 1),
+							null, food.slot));
+				});
+			}
 		}
 
 		Collections.shuffle(unordered);
