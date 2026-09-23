@@ -103,11 +103,9 @@ public final class ActionExecutor {
 				updateApproach(player, target, action.holdGround);
 			});
 			case CRITICAL_ATTACK -> findTarget(client, action.targetEntityUuid).ifPresent(target -> {
-				// 静止して振る。updateApproach()を呼ぶと「まだ距離があるから前進継続」で
-				// 即座に上書きされてしまい、Wキーが離れない原因になっていた。
 				movingForward = false;
 				movingBackward = false;
-				player.lookAt(EntityAnchorArgumentType.EntityAnchor.EYES, aimPoint(target, player));
+				player.lookAt(EntityAnchorArgumentType.EntityAnchor.EYES, aimPoint(target, player, false));
 				if (client.interactionManager != null) {
 					client.interactionManager.attackEntity(player, target);
 				}
@@ -149,8 +147,7 @@ public final class ActionExecutor {
 	}
 
 	private void updateApproach(ClientPlayerEntity player, Entity target, boolean holdGround) {
-		boolean shouldApproach = !holdGround && player.distanceTo(target) > CandidateActionGenerator.RETREAT_TRIGGER_RANGE;
-		movingForward = shouldApproach;
+        movingForward = !holdGround && player.distanceTo(target) > CandidateActionGenerator.RETREAT_TRIGGER_RANGE;
 		movingBackward = false;
 	}
 
@@ -171,8 +168,13 @@ public final class ActionExecutor {
 		}
 	}
 
+	// 変更後
 	private Vec3d aimPoint(Entity target, ClientPlayerEntity player) {
-		if (target.getHeight() >= player.getStandingEyeHeight()) {
+		return aimPoint(target, player, true);
+	}
+
+	private Vec3d aimPoint(Entity target, ClientPlayerEntity player, boolean allowHorizontalOverride) {
+		if (allowHorizontalOverride && target.getHeight() >= player.getStandingEyeHeight()) {
 			return new Vec3d(target.getX(), player.getEyeY(), target.getZ());
 		}
 		if (target instanceof LivingEntity living) {
@@ -193,5 +195,17 @@ public final class ActionExecutor {
 
 	public void stopRetreating() {
 		movingBackward = false;
+	}
+
+	public boolean wouldHit(ClientPlayerEntity player, Entity target, boolean allowHorizontalOverride) {
+		Vec3d eye = player.getEyePos();
+		Vec3d aim = aimPoint(target, player, allowHorizontalOverride);
+		Vec3d toAim = aim.subtract(eye);
+		double dist = toAim.length();
+		if (dist < 0.0001D) {
+			return true;
+		}
+		Vec3d rayEnd = eye.add(toAim.normalize().multiply(dist + 0.5D));
+		return target.getBoundingBox().raycast(eye, rayEnd).isPresent();
 	}
 }

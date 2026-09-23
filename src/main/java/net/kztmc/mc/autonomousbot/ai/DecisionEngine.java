@@ -62,9 +62,6 @@ public final class DecisionEngine {
 	public volatile int debugCandidateCount = 0;
 	public volatile boolean debugLoopDetected = false;
 
-	private long cooldownReadySinceMs = -1;
-	private static final long CRIT_WAIT_GRACE_MS = 350L;
-
 	public DecisionEngine(BotConfig config) {
 		this.config = config;
 		this.aiWorkerExecutor = Executors.newSingleThreadExecutor(r -> {
@@ -217,9 +214,9 @@ public final class DecisionEngine {
 		}
 	}
 
+	// 変更後
 	private void reflexAttackTick(MinecraftClient client) {
 		if (!config.aiEnabled || actionExecutor.isRetreating()) {
-			cooldownReadySinceMs = -1;
 			return;
 		}
 		ClientPlayerEntity player = client.player;
@@ -230,7 +227,14 @@ public final class DecisionEngine {
 
 		boolean cooldownReady = player.getAttackCooldownProgress(0.0f) >= CandidateActionGenerator.COOLDOWN_READY_THRESHOLD;
 		if (!cooldownReady) {
-			cooldownReadySinceMs = -1; // まだ満タンではない - 待機ウィンドウをリセット
+			return;
+		}
+
+		// 落下中でなければ何もしない - 待たずに次tickでまた判定するだけ。
+		// 常時ホップしているので、クールダウンが満タンになってから落下中の
+		// 瞬間が来るまでは高々1ホップ分(1秒未満)で、猶予タイマーは不要。
+		boolean isFalling = !player.isOnGround() && player.getVelocity().y < 0;
+		if (!isFalling) {
 			return;
 		}
 
@@ -245,36 +249,8 @@ public final class DecisionEngine {
 			}
 		}
 		if (nearest == null) {
-			cooldownReadySinceMs = -1;
 			return;
 		}
-
-		long now = System.currentTimeMillis();
-		if (cooldownReadySinceMs < 0) {
-			cooldownReadySinceMs = now; // 今tickで満タンになった - 猶予期間スタート
-		}
-
-		boolean isFalling = !player.isOnGround() && player.getVelocity().y < 0;
-		boolean graceExpired = now - cooldownReadySinceMs >= CRIT_WAIT_GRACE_MS;
-
-		if (!isFalling && !graceExpired) {
-			// もう少し待つ。reflexCombatHopTick()が常時ホップさせているので、
-			// 猶予期間内に落下中のタイミング(クリティカルの機会)が来るはず。
-			return;
-		}
-
-		if (isFalling) {
-			Action reflex = new Action("REFLEX-ATTACK", ActionType.CRITICAL_ATTACK,
-					"Reflex critical attack (falling, in range, cooldown ready)",
-					nearest.getUuid().toString());
-			actionExecutor.execute(client, reflex);
-		} else {
-			Action reflex = new Action("REFLEX-ATTACK", ActionType.SPRINT_ATTACK,
-					"Reflex sprint attack (grace period expired, in range, cooldown ready)",
-					nearest.getUuid().toString());
-			actionExecutor.execute(client, reflex);
-		}
-		cooldownReadySinceMs = -1;
 	}
 
 	/**
@@ -284,7 +260,9 @@ public final class DecisionEngine {
 	 *   ATTACK_RANGE 〜 APPROACH_RADIUS  -> 自動で接近
 	 *   それ以上遠い                  -> 何もしない（Jevの通常判断に任せる）
 	 */
-	private static final double ENGAGE_MIN_RANGE = 2.0D;
+
+	private static final double ENGAGE_MIN_RANGE = 3.5D;
+	private static final double ENGAGE_MAX_RANGE = 5.0D;
 
 	private void reflexCombatHopTick(MinecraftClient client) {
 		if (!config.aiEnabled) {
@@ -296,7 +274,7 @@ public final class DecisionEngine {
 			return;
 		}
 
-		double approachRadius = CandidateActionGenerator.ATTACK_RANGE + 2.0D;
+		double approachRadius = ENGAGE_MAX_RANGE + 2.0D;
 		Box box = player.getBoundingBox().expand(approachRadius);
 
 		Entity nearest = null;
@@ -315,13 +293,13 @@ public final class DecisionEngine {
 		}
 
 		if (nearestDist < ENGAGE_MIN_RANGE) {
-			// 近すぎる - Jevの判断を待たず自動で離れる
+			// 待ち構えたい間合いより近い - 自動で離れる
 			actionExecutor.reflexRetreat(player, nearest);
 			return;
 		}
 
-		if (nearestDist <= CandidateActionGenerator.ATTACK_RANGE) {
-			// ちょうど良い間合い - 前進も後退もせず、ホップだけしてクリティカルの機会を待つ
+		if (nearestDist <= ENGAGE_MAX_RANGE) {
+			// 待ち構える間合い - 前進も後退もせず、ホップして様子を見る
 			actionExecutor.stopApproaching();
 			actionExecutor.stopRetreating();
 			if (player.isOnGround()) {
@@ -330,7 +308,7 @@ public final class DecisionEngine {
 			return;
 		}
 
-		// 射程外 - 接近する
+		// 待ち構える間合いより遠い - 接近する
 		actionExecutor.stopRetreating();
 		actionExecutor.approachTarget(player, nearest);
 	}

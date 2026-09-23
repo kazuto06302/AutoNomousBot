@@ -12,7 +12,7 @@ import java.util.Optional;
 public final class CandidateActionGenerator {
 
 	public static final double ATTACK_RANGE = 3.5D;
-	public static final double RETREAT_TRIGGER_RANGE = 2.0D;
+	public static final double RETREAT_TRIGGER_RANGE = 2.5D;
 	public static final float COOLDOWN_READY_THRESHOLD = 0.9f;
 
 	private CandidateActionGenerator() {
