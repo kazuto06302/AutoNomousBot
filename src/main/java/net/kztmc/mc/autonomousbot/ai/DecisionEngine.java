@@ -278,14 +278,16 @@ public final class DecisionEngine {
 	}
 
 	/**
-	 * 敵が近く(射程+2ブロック以内)にいる間、接地していれば自動でホップし続ける。
-	 * これにより「待ち構えて迎撃」している間も自然に空中→落下の瞬間が生まれ、
-	 * reflexAttackTick()の一撃がクリティカル条件を満たしやすくなる。
-	 * Jevの判断は待たない、常時反射レイヤー。
+	 * 常時反射レイヤー：Jevの判断を待たず、毎tick「間合い」を維持する。
+	 *   ENGAGE_MIN_RANGE 未満        -> 自動で後退（近すぎる）
+	 *   ENGAGE_MIN_RANGE 〜 ATTACK_RANGE -> その場で静止してホップ（クリティカル狙い、いわゆる待ち構え）
+	 *   ATTACK_RANGE 〜 APPROACH_RADIUS  -> 自動で接近
+	 *   それ以上遠い                  -> 何もしない（Jevの通常判断に任せる）
 	 */
-	// 変更後
+	private static final double ENGAGE_MIN_RANGE = 2.0D;
+
 	private void reflexCombatHopTick(MinecraftClient client) {
-		if (!config.aiEnabled || actionExecutor.isRetreating()) {
+		if (!config.aiEnabled) {
 			return;
 		}
 		ClientPlayerEntity player = client.player;
@@ -294,8 +296,8 @@ public final class DecisionEngine {
 			return;
 		}
 
-		double engageRadius = CandidateActionGenerator.ATTACK_RANGE + 2.0D;
-		Box box = player.getBoundingBox().expand(engageRadius);
+		double approachRadius = CandidateActionGenerator.ATTACK_RANGE + 2.0D;
+		Box box = player.getBoundingBox().expand(approachRadius);
 
 		Entity nearest = null;
 		double nearestDist = Double.MAX_VALUE;
@@ -307,24 +309,29 @@ public final class DecisionEngine {
 			}
 		}
 		if (nearest == null) {
+			actionExecutor.stopApproaching();
+			actionExecutor.stopRetreating();
 			return;
 		}
 
-		double approachStopRange = CandidateActionGenerator.ATTACK_RANGE - 2.5D;
-		boolean shouldStopApproaching = nearestDist <= approachStopRange;
-		boolean inAttackRange = nearestDist <= CandidateActionGenerator.ATTACK_RANGE;
+		if (nearestDist < ENGAGE_MIN_RANGE) {
+			// 近すぎる - Jevの判断を待たず自動で離れる
+			actionExecutor.reflexRetreat(player, nearest);
+			return;
+		}
 
-		if (shouldStopApproaching) {
-			// 射程手前で止める(慣性で相手の懐に潜り込んで反撃を食らうのを防ぐ)。
-			// 毎tick呼んで確実にキーを離しておく。
+		if (nearestDist <= CandidateActionGenerator.ATTACK_RANGE) {
+			// ちょうど良い間合い - 前進も後退もせず、ホップだけしてクリティカルの機会を待つ
 			actionExecutor.stopApproaching();
-			if (inAttackRange && player.isOnGround()) {
+			actionExecutor.stopRetreating();
+			if (player.isOnGround()) {
 				actionExecutor.execute(client, Action.of("REFLEX-HOP", ActionType.JUMP, "Reflex combat hop"));
 			}
 			return;
 		}
 
-		// まだ射程手前の停止ラインより外 - 攻撃モーションは出さず、接近だけする
+		// 射程外 - 接近する
+		actionExecutor.stopRetreating();
 		actionExecutor.approachTarget(player, nearest);
 	}
 }

@@ -184,4 +184,14 @@ public final class ActionExecutor {
 	public void stopApproaching() {
 		movingForward = false;
 	}
+
+	public void reflexRetreat(ClientPlayerEntity player, Entity target) {
+		player.lookAt(EntityAnchorArgumentType.EntityAnchor.EYES, aimPoint(target, player));
+		movingBackward = true;
+		movingForward = false;
+	}
+
+	public void stopRetreating() {
+		movingBackward = false;
+	}
 }
