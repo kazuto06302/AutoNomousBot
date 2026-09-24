@@ -1,7 +1,7 @@
 package net.kztmc.mc.autonomousbot.planner;
 
 /**
- * A single unit of work under a {@link Goal}. Phase 1 does not decompose
+ * A single unit of work under a {@link GoalStage}. Phase 1 does not decompose
  * goals into multi-step task queues yet - Jev's per-cycle choice IS the
  * task for now. This class exists so Planner has somewhere to grow into
  * without a breaking API change later (e.g. "walk to stronghold" as a

@@ -13,6 +13,7 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.client.world.ClientWorld;
 import net.minecraft.text.Text;
+import net.minecraft.util.math.Vec3d;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -21,6 +22,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import net.minecraft.entity.Entity;
@@ -82,6 +84,7 @@ public final class DecisionEngine {
 		drainCompletedDecision(client);
 		reflexAttackTick(client);
 		reflexCombatHopTick(client);
+		reflexNavigationTick(client);
 
 		if (!config.aiEnabled) {
 			return;
@@ -102,6 +105,7 @@ public final class DecisionEngine {
 
 	private void startDecisionCycle(ClientPlayerEntity player, ClientWorld world) {
 		WorldState state = WorldStateCollector.collect(player, world);
+		planner.updateStage(state);
 		List<Action> candidates = CandidateActionGenerator.generate(state);
 		debugCandidateCount = candidates.size();
 
@@ -135,8 +139,9 @@ public final class DecisionEngine {
 
 	private DecisionQuestion buildQuestion(WorldState state, List<Action> candidates) {
 		StringBuilder instructions = new StringBuilder(
-				"You are controlling a Minecraft player bot. Current goal: " + planner.getCurrentGoal()
-						+ ". Choose exactly one of the offered actions that best fits the current state. "
+				"You are controlling a Minecraft player bot. Ultimate objective: defeat the Ender Dragon. "
+						+ "Current stage: " + stageDescription(planner.getCurrentStage()) + ". "
+						+ "Choose exactly one of the offered actions that best fits the current state. "
 						+ "WAIT should only be chosen when none of the other offered actions make sense right now "
 						+ "(e.g. genuinely nothing to explore, attack, or move toward). When the situation is calm and "
 						+ "no threat is nearby, prefer making progress (moving, looking around, jumping) over waiting. "
@@ -151,6 +156,18 @@ public final class DecisionEngine {
 			question.addOption(candidate.id, candidate.type + ": " + candidate.label);
 		}
 		return question;
+	}
+
+	private String stageDescription(net.kztmc.mc.autonomousbot.planner.GoalStage stage) {
+		return switch (stage) {
+			case GATHER_BASICS -> "GATHER_BASICS (no weapon/pickaxe yet - prioritize survival and finding basic resources)";
+			case EXPLORE_OVERWORLD -> "EXPLORE_OVERWORLD (have basic gear - explore to find useful resources and structures)";
+			case PREPARE_NETHER -> "PREPARE_NETHER (have enough obsidian and flint and steel - not yet implemented: building the portal)";
+			case NETHER_FORTRESS -> "NETHER_FORTRESS (in the Nether, need blaze rods - not yet implemented: fortress navigation)";
+			case FIND_STRONGHOLD -> "FIND_STRONGHOLD (have an ender eye - not yet implemented: throwing/tracking eyes of ender)";
+			case PREPARE_END_FIGHT -> "PREPARE_END_FIGHT (about to enter the End - not yet implemented: gear checklist)";
+			case DEFEAT_DRAGON -> "DEFEAT_DRAGON (in the End - not yet implemented: dragon-specific combat)";
+		};
 	}
 
 	private void drainCompletedDecision(MinecraftClient client) {
@@ -217,7 +234,8 @@ public final class DecisionEngine {
 	}
 
 	private void reflexAttackTick(MinecraftClient client) {
-		if (!config.aiEnabled || actionExecutor.isRetreating() || actionExecutor.isEating()) {
+		if (!config.aiEnabled || actionExecutor.isRetreating() || actionExecutor.isEating()
+				|| actionExecutor.isMining() || actionExecutor.isCrafting()) {
 			return;
 		}
 		ClientPlayerEntity player = client.player;
@@ -272,7 +290,8 @@ public final class DecisionEngine {
 	private static final double ENGAGE_MIN_RANGE = 3.5D;
 
 	private void reflexCombatHopTick(MinecraftClient client) {
-		if (!config.aiEnabled || actionExecutor.isEating()) {
+		if (!config.aiEnabled || actionExecutor.isRetreating() || actionExecutor.isEating()
+				|| actionExecutor.isMining() || actionExecutor.isCrafting()) {
 			return;
 		}
 		ClientPlayerEntity player = client.player;
@@ -315,5 +334,52 @@ public final class DecisionEngine {
 
 		actionExecutor.stopRetreating();
 		actionExecutor.approachTarget(player, nearest);
+	}
+
+	private static final double EXPLORE_MIN_DISTANCE = 16.0D;
+	private static final double EXPLORE_MAX_DISTANCE = 32.0D;
+	private static final double WAYPOINT_REACHED_RADIUS = 3.0D;
+
+	/**
+	 * 常時反射レイヤー：戦闘・食事などの緊急対応が無い間、自動で目的地を
+	 * 決めて歩き続ける。目的地に着いたら(または最初から無ければ)、現在地
+	 * からランダムな方角・距離で次の目的地を選び直す。
+	 */
+	private void reflexNavigationTick(MinecraftClient client) {
+		if (!config.aiEnabled || actionExecutor.isRetreating() || actionExecutor.isEating()
+				|| actionExecutor.isMining() || actionExecutor.isCrafting()) {
+			return;
+		}
+		ClientPlayerEntity player = client.player;
+		ClientWorld world = client.world;
+		if (player == null || world == null) {
+			return;
+		}
+
+		// 近くに敵がいるなら戦闘reflexに任せる(ナビゲーションは介入しない)
+		double combatCheckRadius = CandidateActionGenerator.ATTACK_RANGE + 2.0D;
+		Box combatBox = player.getBoundingBox().expand(combatCheckRadius);
+		boolean hostileNearby = !world.getOtherEntities(player, combatBox, e -> e instanceof Monster).isEmpty();
+		if (hostileNearby) {
+			return;
+		}
+
+		boolean needNewWaypoint = !planner.hasWaypoint();
+		if (!needNewWaypoint) {
+			double dx = player.getX() - planner.getWaypointX();
+			double dz = player.getZ() - planner.getWaypointZ();
+			needNewWaypoint = Math.sqrt(dx * dx + dz * dz) <= WAYPOINT_REACHED_RADIUS;
+		}
+
+		if (needNewWaypoint) {
+			double angle = ThreadLocalRandom.current().nextDouble(0, Math.PI * 2);
+			double distance = ThreadLocalRandom.current().nextDouble(EXPLORE_MIN_DISTANCE, EXPLORE_MAX_DISTANCE);
+			double newX = player.getX() + Math.cos(angle) * distance;
+			double newZ = player.getZ() + Math.sin(angle) * distance;
+			planner.setWaypoint(newX, newZ);
+		}
+
+		Vec3d waypoint = new Vec3d(planner.getWaypointX(), player.getY(), planner.getWaypointZ());
+		actionExecutor.navigateTowards(player, waypoint);
 	}
 }

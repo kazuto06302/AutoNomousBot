@@ -1,5 +1,6 @@
 package net.kztmc.mc.autonomousbot.behavior;
 
+import net.kztmc.mc.autonomousbot.perception.BlockSummary;
 import net.kztmc.mc.autonomousbot.perception.EntitySummary;
 import net.kztmc.mc.autonomousbot.perception.ItemSummary;
 import net.kztmc.mc.autonomousbot.perception.WorldState;
@@ -154,12 +155,15 @@ public final class CandidateActionGenerator {
 			}
 		}
 
+		addGatheringCandidates(unordered, state);
+
 		Collections.shuffle(unordered);
 
 		List<Action> candidates = new ArrayList<>();
 		char nextId = 'A';
 		for (Action a : unordered) {
-			candidates.add(new Action(String.valueOf(nextId++), a.type, a.label, a.targetEntityUuid, a.targetSlot, a.holdGround));
+			candidates.add(new Action(String.valueOf(nextId++), a.type, a.label, a.targetEntityUuid, a.targetSlot,
+					a.holdGround, a.targetBlockX, a.targetBlockY, a.targetBlockZ, a.recipeId));
 		}
 		return candidates;
 	}
@@ -183,5 +187,88 @@ public final class CandidateActionGenerator {
 				.filter(i -> i.slot >= 0 && i.slot <= 8)
 				.filter(i -> FOOD_ITEM_IDS.contains(i.itemId))
 				.findFirst();
+	}
+
+	private static void addGatheringCandidates(List<Action> unordered, WorldState state) {
+		boolean hasPickaxe = hasItemEndingWith(state, "_pickaxe");
+		boolean hasStonePickaxe = hasExactItem(state, "minecraft:stone_pickaxe");
+		int oakPlanks = countItem(state, "minecraft:oak_planks");
+		int sticks = countItem(state, "minecraft:stick");
+		int cobblestone = countItem(state, "minecraft:cobblestone");
+		boolean hasTableItem = countItem(state, "minecraft:crafting_table") > 0;
+		boolean hasAnyLog = state.inventory.stream().anyMatch(i -> i.itemId.endsWith("_log"));
+		boolean tableNearby = state.nearbyBlocks.stream().anyMatch(b -> b.blockId.equals("minecraft:crafting_table"));
+		boolean tableReady = tableNearby || hasTableItem;
+
+		if (!hasAnyLog && oakPlanks < 4 && !hasPickaxe) {
+			findNearbyBlock(state, id -> id.endsWith("_log")).ifPresent(block ->
+					unordered.add(Action.mine(null, block.absX, block.absY, block.absZ,
+							"Mine the nearby log block (" + block.blockId + ") to gather wood")));
+		}
+
+		if (hasAnyLog && oakPlanks < 4) {
+			unordered.add(Action.craft(null, "planks", "Craft planks from the log you're carrying"));
+		}
+
+		if (!tableNearby && !hasTableItem && oakPlanks >= 4) {
+			unordered.add(Action.craft(null, "crafting_table", "Craft a crafting table"));
+		}
+		if (!tableNearby && hasTableItem) {
+			unordered.add(Action.placeCraftingTable(null, "Place the crafting table on the ground"));
+		}
+
+		if (tableReady && sticks < 2 && oakPlanks >= 2) {
+			unordered.add(Action.craft(null, "sticks", "Craft sticks from oak planks"));
+		}
+
+		if (tableReady && !hasPickaxe && oakPlanks >= 3 && sticks >= 2) {
+			unordered.add(Action.craft(null, "wooden_pickaxe", "Craft a wooden pickaxe (needed to mine stone)"));
+		}
+
+		if (hasPickaxe && cobblestone < 9) {
+			findNearbyBlock(state, id -> id.equals("minecraft:stone") || id.equals("minecraft:cobblestone")
+					|| id.startsWith("minecraft:deepslate")).ifPresent(block ->
+					unordered.add(Action.mine(null, block.absX, block.absY, block.absZ,
+							"Mine the nearby stone block (" + block.blockId + ") to gather cobblestone")));
+		}
+
+		if (tableReady && !hasStonePickaxe && cobblestone >= 3 && sticks >= 2) {
+			unordered.add(Action.craft(null, "stone_pickaxe", "Craft a stone pickaxe"));
+		}
+		if (tableReady && !hasExactItem(state, "minecraft:stone_axe") && cobblestone >= 3 && sticks >= 2) {
+			unordered.add(Action.craft(null, "stone_axe", "Craft a stone axe"));
+		}
+		if (tableReady && !hasExactItem(state, "minecraft:stone_shovel") && cobblestone >= 1 && sticks >= 2) {
+			unordered.add(Action.craft(null, "stone_shovel", "Craft a stone shovel"));
+		}
+		if (tableReady && !hasExactItem(state, "minecraft:stone_sword") && cobblestone >= 2 && sticks >= 1) {
+			unordered.add(Action.craft(null, "stone_sword", "Craft a stone sword"));
+		}
+	}
+
+	private static boolean hasItemEndingWith(WorldState state, String suffix) {
+		return state.inventory.stream().anyMatch(i -> i.itemId.endsWith(suffix));
+	}
+
+	private static boolean hasExactItem(WorldState state, String itemId) {
+		return state.inventory.stream().anyMatch(i -> i.itemId.equals(itemId));
+	}
+
+	private static int countItem(WorldState state, String itemId) {
+		int total = 0;
+		for (ItemSummary item : state.inventory) {
+			if (item.itemId.equals(itemId)) {
+				total += item.count;
+			}
+		}
+		return total;
+	}
+
+	private static Optional<BlockSummary> findNearbyBlock(WorldState state, java.util.function.Predicate<String> matcher) {
+		return state.nearbyBlocks.stream()
+				.filter(b -> matcher.test(b.blockId))
+				.min((a, b) -> Integer.compare(
+						a.relX * a.relX + a.relY * a.relY + a.relZ * a.relZ,
+						b.relX * b.relX + b.relY * b.relY + b.relZ * b.relZ));
 	}
 }

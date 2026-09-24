@@ -35,7 +35,7 @@ public final class BlockScanner {
 						continue;
 					}
 					String id = Registries.BLOCK.getId(state.getBlock()).toString();
-					result.add(new BlockSummary(dx, dy, dz, id));
+					result.add(new BlockSummary(dx, dy, dz, id, pos.getX(), pos.getY(), pos.getZ()));
 				}
 			}
 		}
