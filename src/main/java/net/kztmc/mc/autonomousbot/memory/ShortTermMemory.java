@@ -43,7 +43,10 @@ public final class ShortTermMemory implements Memory {
 				count++;
 			}
 		}
-		return first != null && first != ActionType.WAIT && count >= LOOP_THRESHOLD;
+		// WAITに加えて、MINE/CRAFTも意図的に連続することがある正常な行動
+		// (例: 石を10個連続で掘る)なので、ループ扱いしない。
+		boolean exempt = first == ActionType.WAIT || first == ActionType.MINE || first == ActionType.CRAFT;
+		return first != null && !exempt && count >= LOOP_THRESHOLD;
 	}
 
 	public void clear() {

@@ -95,6 +95,10 @@ public final class DecisionEngine {
 			return;
 		}
 
+		if (actionExecutor.isMining() || actionExecutor.isCrafting()) {
+			return;
+		}
+
 		long now = System.currentTimeMillis();
 		if (requestInFlight.get() || now - lastDecisionAtMs < config.decisionIntervalMs) {
 			return;
