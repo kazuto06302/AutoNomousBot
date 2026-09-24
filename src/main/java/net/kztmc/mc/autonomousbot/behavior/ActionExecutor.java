@@ -57,7 +57,7 @@ public final class ActionExecutor {
 	private BlockPos miningTarget = null;
 	private int miningTicks = 0;
 
-	private enum CraftPhase { NONE, ENSURE_TABLE, OPEN_TABLE, WAIT_SCREEN }
+	private enum CraftPhase { NONE, INVENTORY_CRAFT, ENSURE_TABLE, OPEN_TABLE, WAIT_SCREEN }
 	private CraftPhase craftPhase = CraftPhase.NONE;
 	private String pendingRecipeId;
 	private int craftWaitTicks = 0;
@@ -333,11 +333,14 @@ public final class ActionExecutor {
 	// クラフト
 	// ------------------------------------------------------------------
 
+	private static final java.util.Set<String> NO_TABLE_RECIPES =
+			java.util.Set.of("planks", "sticks", "crafting_table");
+
 	private void startCraft(String recipeId) {
 		miningTarget = null;
 		pendingRecipeId = recipeId;
-		craftPhase = CraftPhase.ENSURE_TABLE;
 		craftWaitTicks = 0;
+		craftPhase = NO_TABLE_RECIPES.contains(recipeId) ? CraftPhase.INVENTORY_CRAFT : CraftPhase.ENSURE_TABLE;
 	}
 
 	private void tickCraft(MinecraftClient client) {
@@ -361,6 +364,10 @@ public final class ActionExecutor {
 					craftPhase = CraftPhase.NONE;
 				}
 			}
+			case INVENTORY_CRAFT -> {
+				performInventoryCraft(client, player, pendingRecipeId);
+				craftPhase = CraftPhase.NONE;
+			}
 			case OPEN_TABLE -> {
 				craftWaitTicks++;
 				BlockPos table = findNearbyCraftingTable(client, player);
@@ -373,10 +380,14 @@ public final class ActionExecutor {
 			}
 			case WAIT_SCREEN -> {
 				craftWaitTicks++;
-				if (player.currentScreenHandler instanceof CraftingScreenHandler) {
+				boolean screenOpen = player.currentScreenHandler instanceof CraftingScreenHandler;
+				if (screenOpen && craftWaitTicks >= MIN_SCREEN_OPEN_WAIT_TICKS) {
+					// 画面が開いたことを確認してから、さらに数tick待ってから操作する。
+					// interactBlock()直後のtickだと画面遷移がまだ反映しきっていない
+					// ことがあり、クリックが正しいスロットに届かない場合があったため。
 					performCraft(client, player);
 					craftPhase = CraftPhase.NONE;
-				} else if (craftWaitTicks > CRAFT_SCREEN_TIMEOUT_TICKS) {
+				} else if (!screenOpen && craftWaitTicks > CRAFT_SCREEN_TIMEOUT_TICKS) {
 					LOGGER.warn("Crafting table screen never opened for {}", pendingRecipeId);
 					craftPhase = CraftPhase.NONE;
 				}
@@ -384,6 +395,8 @@ public final class ActionExecutor {
 			default -> craftPhase = CraftPhase.NONE;
 		}
 	}
+
+	private static final int MIN_SCREEN_OPEN_WAIT_TICKS = 3;
 
 	private void openCraftingTable(MinecraftClient client, ClientPlayerEntity player, BlockPos table) {
 		player.lookAt(EntityAnchorArgumentType.EntityAnchor.EYES, Vec3d.ofCenter(table));
@@ -421,8 +434,9 @@ public final class ActionExecutor {
 					player.closeHandledScreen();
 					return;
 				}
-				client.interactionManager.clickSlot(syncId, sourceSlot, 0, SlotActionType.PICKUP, player);
-				client.interactionManager.clickSlot(syncId, cell, 0, SlotActionType.PICKUP, player);
+				client.interactionManager.clickSlot(syncId, sourceSlot, 0, SlotActionType.PICKUP, player); // スタックごと持つ
+				client.interactionManager.clickSlot(syncId, cell, 1, SlotActionType.PICKUP, player);        // 右クリック: 1個だけ置く
+				client.interactionManager.clickSlot(syncId, sourceSlot, 0, SlotActionType.PICKUP, player);  // 残りを元へ戻す
 			}
 		}
 
@@ -490,6 +504,72 @@ public final class ActionExecutor {
 			}
 		}
 		return null;
+	}
+
+	private void performInventoryCraft(MinecraftClient client, ClientPlayerEntity player, String recipeId) {
+		int syncId = player.playerScreenHandler.syncId;
+
+		boolean ok = switch (recipeId) {
+			case "planks" -> craftPlanksFromLog(client, player, syncId);
+			case "sticks" -> distributeToGrid(client, player, syncId, "minecraft:oak_planks", new int[] {1, 3});
+			case "crafting_table" -> distributeToGrid(client, player, syncId, "minecraft:oak_planks", new int[] {1, 2, 3, 4});
+			default -> false;
+		};
+
+		if (ok) {
+			client.interactionManager.clickSlot(syncId, 0, 0, SlotActionType.QUICK_MOVE, player);
+		} else {
+			LOGGER.warn("Inventory craft failed for {}", recipeId);
+		}
+		clearInventoryCraftGrid(client, player, syncId);
+	}
+
+	private boolean craftPlanksFromLog(MinecraftClient client, ClientPlayerEntity player, int syncId) {
+		int logSlot = findPlayerInventorySlot(player, id -> id.endsWith("_log"));
+		if (logSlot < 0) {
+			return false;
+		}
+		client.interactionManager.clickSlot(syncId, logSlot, 0, SlotActionType.PICKUP, player); // 左クリック: スタックごと持つ
+		client.interactionManager.clickSlot(syncId, 1, 1, SlotActionType.PICKUP, player);        // 右クリック: 1個だけ置く
+		client.interactionManager.clickSlot(syncId, logSlot, 0, SlotActionType.PICKUP, player);  // 残りを元へ戻す
+		return true;
+	}
+
+	/** itemIdをカーソルで持ち上げ、指定した各グリッドスロットへ1個ずつ配る。余りは元のスロットへ戻す。 */
+	private boolean distributeToGrid(MinecraftClient client, ClientPlayerEntity player, int syncId, String itemId, int[] gridSlots) {
+		int sourceSlot = findPlayerInventorySlot(player, id -> id.equals(itemId));
+		if (sourceSlot < 0) {
+			return false;
+		}
+		ItemStack stack = player.playerScreenHandler.slots.get(sourceSlot).getStack();
+		if (stack.getCount() < gridSlots.length) {
+			return false;
+		}
+		client.interactionManager.clickSlot(syncId, sourceSlot, 0, SlotActionType.PICKUP, player); // スタックごと持つ
+		for (int slot : gridSlots) {
+			client.interactionManager.clickSlot(syncId, slot, 1, SlotActionType.PICKUP, player);    // 1個ずつ置く
+		}
+		client.interactionManager.clickSlot(syncId, sourceSlot, 0, SlotActionType.PICKUP, player);  // 残りを戻す
+		return true;
+	}
+
+	private void clearInventoryCraftGrid(MinecraftClient client, ClientPlayerEntity player, int syncId) {
+		for (int slot = 1; slot <= 4; slot++) {
+			if (!player.playerScreenHandler.slots.get(slot).getStack().isEmpty()) {
+				client.interactionManager.clickSlot(syncId, slot, 0, SlotActionType.QUICK_MOVE, player);
+			}
+		}
+	}
+
+	private int findPlayerInventorySlot(ClientPlayerEntity player, java.util.function.Predicate<String> matcher) {
+		var slots = player.playerScreenHandler.slots;
+		for (int i = 9; i < 45; i++) { // 9-35: メインインベントリ, 36-44: ホットバー
+			ItemStack stack = slots.get(i).getStack();
+			if (!stack.isEmpty() && matcher.test(Registries.ITEM.getId(stack.getItem()).toString())) {
+				return i;
+			}
+		}
+		return -1;
 	}
 
 	/** 指定itemIdをホットバー(0-8)に持ってくる。既にあればそのスロットを選択するだけ。 */

@@ -128,15 +128,14 @@ public final class DecisionEngine {
 
 		requestInFlight.set(true);
 		lastDecisionAtMs = System.currentTimeMillis();
+		long requestStartedAtMs = lastDecisionAtMs;
 
 		jevClient.askChoice(state, question, fallbackId).whenCompleteAsync((decision, error) -> {
-			// Any exception here means our own future-composition had a bug;
-			// JevClient itself already guarantees a non-null fallback Decision.
 			if (error != null) {
 				LOGGER.error("Unexpected decision pipeline failure", error);
 				decision = Decision.fallback(fallbackId);
 			}
-			completedDecisions.add(new PendingResult(decision, candidates));
+			completedDecisions.add(new PendingResult(decision, candidates, requestStartedAtMs));
 			requestInFlight.set(false);
 		}, aiWorkerExecutor);
 	}
@@ -146,7 +145,9 @@ public final class DecisionEngine {
 				"You are controlling a Minecraft player bot. Ultimate objective: defeat the Ender Dragon. "
 						+ "Current stage: " + stageDescription(planner.getCurrentStage()) + ". "
 						+ "Choose exactly one of the offered actions that best fits the current state. "
-						+ "WAIT should only be chosen when none of the other offered actions make sense right now "
+						+ "IMPORTANT PRIORITY: if any MINE, CRAFT, or PLACE_CRAFTING_TABLE action is offered, strongly "
+						+ "prefer it over MOVE_FORWARD or general exploration - progressing your tools/gear takes priority "
+						+ "over wandering, unless you are in immediate danger (low health, nearby hostile mob) or need to eat. "
 						+ "(e.g. genuinely nothing to explore, attack, or move toward). When the situation is calm and "
 						+ "no threat is nearby, prefer making progress (moving, looking around, jumping) over waiting. "
 						+ "Only prioritize safety (waiting/retreating) when actually low on health or a hostile mob is close."
@@ -174,11 +175,16 @@ public final class DecisionEngine {
 		};
 	}
 
+	private static final long MAX_DECISION_AGE_MS = 2000L;
+
 	private void drainCompletedDecision(MinecraftClient client) {
 		PendingResult result = completedDecisions.poll();
 		if (result == null) {
 			return;
 		}
+
+		long age = System.currentTimeMillis() - result.startedAtMs();
+		if (age > MAX_DECISION_AGE_MS) return;
 
 		Action chosen = resolveChosenAction(result);
 		debugPreviousDecisionId = debugCurrentDecisionId;
@@ -227,7 +233,7 @@ public final class DecisionEngine {
 		aiWorkerExecutor.shutdownNow();
 	}
 
-	private record PendingResult(Decision decision, List<Action> candidates) {
+	private record PendingResult(Decision decision, List<Action> candidates, long startedAtMs) {
 		Map<String, Action> candidatesById() {
 			Map<String, Action> map = new java.util.LinkedHashMap<>();
 			for (Action a : candidates) {

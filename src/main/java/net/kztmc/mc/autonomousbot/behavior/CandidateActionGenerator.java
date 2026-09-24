@@ -189,60 +189,94 @@ public final class CandidateActionGenerator {
 				.findFirst();
 	}
 
+	private static final String[] TOOL_PRIORITY = {
+			"minecraft:wooden_pickaxe",
+			"minecraft:stone_pickaxe",
+			"minecraft:stone_axe",
+			"minecraft:stone_shovel",
+			"minecraft:stone_sword"
+	};
+
+	/**
+	 * 「石ツール一式」に向けて、まだ持っていない中で最優先のツールを1つ決め、
+	 * それを作るために"今すぐやるべき次の一手"だけを候補として1つ出す。
+	 * 複数の段取りを同時に提示しない(作業台→棒→材料→完成、を順番に1手ずつ)。
+	 */
 	private static void addGatheringCandidates(List<Action> unordered, WorldState state) {
-		boolean hasPickaxe = hasItemEndingWith(state, "_pickaxe");
-		boolean hasStonePickaxe = hasExactItem(state, "minecraft:stone_pickaxe");
+		String goalItem = Arrays.stream(TOOL_PRIORITY).filter(candidate -> !hasExactItem(state, candidate)).findFirst().orElse(null);
+        if (goalItem == null) {
+			return; // 石ツール一式そろった
+		}
+
+		boolean tableNearby = state.nearbyBlocks.stream().anyMatch(b -> b.blockId.equals("minecraft:crafting_table"));
+		boolean hasTableItem = countItem(state, "minecraft:crafting_table") > 0;
+		boolean tableReady = tableNearby || hasTableItem;
+		boolean hasAnyLog = state.inventory.stream().anyMatch(i -> i.itemId.endsWith("_log"));
 		int oakPlanks = countItem(state, "minecraft:oak_planks");
 		int sticks = countItem(state, "minecraft:stick");
 		int cobblestone = countItem(state, "minecraft:cobblestone");
-		boolean hasTableItem = countItem(state, "minecraft:crafting_table") > 0;
-		boolean hasAnyLog = state.inventory.stream().anyMatch(i -> i.itemId.endsWith("_log"));
-		boolean tableNearby = state.nearbyBlocks.stream().anyMatch(b -> b.blockId.equals("minecraft:crafting_table"));
-		boolean tableReady = tableNearby || hasTableItem;
+		boolean hasAnyPickaxe = hasItemEndingWith(state, "_pickaxe");
 
-		if (!hasAnyLog && oakPlanks < 4 && !hasPickaxe) {
-			findNearbyBlock(state, id -> id.endsWith("_log")).ifPresent(block ->
-					unordered.add(Action.mine(null, block.absX, block.absY, block.absZ,
-							"Mine the nearby log block (" + block.blockId + ") to gather wood")));
+		int sticksNeeded = 2;
+		int cobbleNeeded = 0;
+		int planksNeeded = 0;
+		String recipeId;
+		switch (goalItem) {
+			case "minecraft:wooden_pickaxe" -> { recipeId = "wooden_pickaxe"; planksNeeded = 3; }
+			case "minecraft:stone_pickaxe" -> { recipeId = "stone_pickaxe"; cobbleNeeded = 3; }
+			case "minecraft:stone_axe" -> { recipeId = "stone_axe"; cobbleNeeded = 3; }
+			case "minecraft:stone_shovel" -> { recipeId = "stone_shovel"; cobbleNeeded = 1; }
+			default -> { recipeId = "stone_sword"; cobbleNeeded = 2; sticksNeeded = 1; }
 		}
 
-		if (hasAnyLog && oakPlanks < 4) {
-			unordered.add(Action.craft(null, "planks", "Craft planks from the log you're carrying"));
+		// 1) 作業台の確保が最優先
+		if (!tableReady) {
+			if (hasTableItem) {
+				unordered.add(Action.placeCraftingTable(null, "Place the crafting table - needed to progress toward " + goalItem));
+			} else if (oakPlanks >= 4) {
+				unordered.add(Action.craft(null, "crafting_table", "Craft a crafting table - needed to progress toward " + goalItem));
+			} else if (hasAnyLog) {
+				unordered.add(Action.craft(null, "planks", "Craft planks from your log - working toward a crafting table"));
+			} else {
+				findNearbyBlock(state, id -> id.endsWith("_log")).ifPresent(block ->
+						unordered.add(Action.mine(null, block.absX, block.absY, block.absZ,
+								"Mine a log - you need a crafting table before you can progress toward " + goalItem)));
+			}
+			return;
 		}
 
-		if (!tableNearby && !hasTableItem && oakPlanks >= 4) {
-			unordered.add(Action.craft(null, "crafting_table", "Craft a crafting table"));
-		}
-		if (!tableNearby && hasTableItem) {
-			unordered.add(Action.placeCraftingTable(null, "Place the crafting table on the ground"));
+		// 2) 棒が足りなければ確保
+		if (sticks < sticksNeeded) {
+			if (oakPlanks >= 2) {
+				unordered.add(Action.craft(null, "sticks", "Craft sticks - needed for " + goalItem));
+			} else if (hasAnyLog) {
+				unordered.add(Action.craft(null, "planks", "Craft planks - needed to make sticks for " + goalItem));
+			} else {
+				findNearbyBlock(state, id -> id.endsWith("_log")).ifPresent(block ->
+						unordered.add(Action.mine(null, block.absX, block.absY, block.absZ,
+								"Mine a log - needed to eventually make sticks for " + goalItem)));
+			}
+			return;
 		}
 
-		if (tableReady && sticks < 2 && oakPlanks >= 2) {
-			unordered.add(Action.craft(null, "sticks", "Craft sticks from oak planks"));
-		}
-
-		if (tableReady && !hasPickaxe && oakPlanks >= 3 && sticks >= 2) {
-			unordered.add(Action.craft(null, "wooden_pickaxe", "Craft a wooden pickaxe (needed to mine stone)"));
-		}
-
-		if (hasPickaxe && cobblestone < 9) {
+		// 3) 最後に本体材料(木のツルハシなら板材、石系ならcobblestone)を確保して完成
+		if (goalItem.equals("minecraft:wooden_pickaxe")) {
+			if (oakPlanks >= planksNeeded) {
+				unordered.add(Action.craft(null, recipeId, "Craft " + goalItem + " (final step, you have everything needed)"));
+			} else if (hasAnyLog) {
+				unordered.add(Action.craft(null, "planks", "Craft more planks - needed for " + goalItem));
+			} else {
+				findNearbyBlock(state, id -> id.endsWith("_log")).ifPresent(block ->
+						unordered.add(Action.mine(null, block.absX, block.absY, block.absZ,
+								"Mine a log - need more planks for " + goalItem)));
+			}
+		} else if (cobblestone >= cobbleNeeded) {
+			unordered.add(Action.craft(null, recipeId, "Craft " + goalItem + " (final step, you have everything needed)"));
+		} else if (hasAnyPickaxe) {
 			findNearbyBlock(state, id -> id.equals("minecraft:stone") || id.equals("minecraft:cobblestone")
 					|| id.startsWith("minecraft:deepslate")).ifPresent(block ->
 					unordered.add(Action.mine(null, block.absX, block.absY, block.absZ,
-							"Mine the nearby stone block (" + block.blockId + ") to gather cobblestone")));
-		}
-
-		if (tableReady && !hasStonePickaxe && cobblestone >= 3 && sticks >= 2) {
-			unordered.add(Action.craft(null, "stone_pickaxe", "Craft a stone pickaxe"));
-		}
-		if (tableReady && !hasExactItem(state, "minecraft:stone_axe") && cobblestone >= 3 && sticks >= 2) {
-			unordered.add(Action.craft(null, "stone_axe", "Craft a stone axe"));
-		}
-		if (tableReady && !hasExactItem(state, "minecraft:stone_shovel") && cobblestone >= 1 && sticks >= 2) {
-			unordered.add(Action.craft(null, "stone_shovel", "Craft a stone shovel"));
-		}
-		if (tableReady && !hasExactItem(state, "minecraft:stone_sword") && cobblestone >= 2 && sticks >= 1) {
-			unordered.add(Action.craft(null, "stone_sword", "Craft a stone sword"));
+							"Mine stone - need more cobblestone for " + goalItem)));
 		}
 	}
 
